@@ -1,0 +1,133 @@
+{
+  "id": "MANIFEST-2026-05-12",
+  "routeName": "Makati CBD Express",
+  "date": "2026-05-12T08:00:00Z",
+  "status": "in_progress",
+  "totalStops": 5,
+  "completedStops": 0,
+  "failedStops": 0,
+  "rider": {
+    "id": "RIDER-001",
+    "name": "Carlos Reyes",
+    "phone": "+63 917 123 4567",
+    "hubName": "Makati Hub",
+    "zone": "Zone 4A"
+  },
+  "stops": [
+    {
+      "id": "stop-001",
+      "sequence": 1,
+      "status": "pending",
+      "recipient": {
+        "name": "Maria Garcia",
+        "phone": "+63 918 111 2222"
+      },
+      "address": {
+        "text": "PBCom Tower, Ayala Avenue, Makati City",
+        "lat": 14.5586,
+        "lng": 121.0189
+      },
+      "trackingNumber": "LBC-992-4811",
+      "serviceType": "Express Padala",
+      "codAmount": 1250.00,
+      "packageDetails": "Small Pouch (0.5 kg)",
+      "specialInstructions": "Leave with lobby receptionist if not available.",
+      "distanceKm": 1.2,
+      "eta": "5 mins",
+      "attemptCount": 0,
+      "maxAttempts": 3
+    },
+    {
+      "id": "stop-002",
+      "sequence": 2,
+      "status": "pending",
+      "recipient": {
+        "name": "Juan Dela Cruz",
+        "phone": "+63 919 333 4444"
+      },
+      "address": {
+        "text": "Greenbelt 5, Legazpi Street, Makati City",
+        "lat": 14.5529,
+        "lng": 121.0205
+      },
+      "trackingNumber": "LBC-993-5522",
+      "serviceType": "Cash on Delivery",
+      "codAmount": 3400.00,
+      "packageDetails": "Medium Box (2.0 kg)",
+      "specialInstructions": "Call upon arrival at the mall entrance.",
+      "distanceKm": 0.8,
+      "eta": "3 mins",
+      "attemptCount": 0,
+      "maxAttempts": 3
+    },
+    {
+      "id": "stop-003",
+      "sequence": 3,
+      "status": "pending",
+      "recipient": {
+        "name": "Ana Santos",
+        "phone": "+63 920 555 6666"
+      },
+      "address": {
+        "text": "Salcedo Village, L.P. Leviste St, Makati City",
+        "lat": 14.5604,
+        "lng": 121.0245
+      },
+      "trackingNumber": "LBC-994-7733",
+      "serviceType": "Document Express",
+      "codAmount": 0.00,
+      "packageDetails": "Document Envelope",
+      "specialInstructions": "",
+      "distanceKm": 1.5,
+      "eta": "6 mins",
+      "attemptCount": 0,
+      "maxAttempts": 3
+    },
+    {
+      "id": "stop-004",
+      "sequence": 4,
+      "status": "pending",
+      "recipient": {
+        "name": "Pedro Reyes",
+        "phone": "+63 921 777 8888"
+      },
+      "address": {
+        "text": "Century City Mall, Kalayaan Ave, Makati City",
+        "lat": 14.5658,
+        "lng": 121.0287
+      },
+      "trackingNumber": "LBC-995-8844",
+      "serviceType": "Express Padala",
+      "codAmount": 550.00,
+      "packageDetails": "Small Pouch (0.2 kg)",
+      "specialInstructions": "Deliver to the security desk.",
+      "distanceKm": 2.1,
+      "eta": "8 mins",
+      "attemptCount": 0,
+      "maxAttempts": 3
+    },
+    {
+      "id": "stop-005",
+      "sequence": 5,
+      "status": "pending",
+      "recipient": {
+        "name": "Rosa Lim",
+        "phone": "+63 922 999 0000"
+      },
+      "address": {
+        "text": "Rockwell Center, Plaza Drive, Makati City",
+        "lat": 14.5645,
+        "lng": 121.0363
+      },
+      "trackingNumber": "LBC-996-9955",
+      "serviceType": "Cash on Delivery",
+      "codAmount": 8900.00,
+      "packageDetails": "Large Box (5.0 kg)",
+      "specialInstructions": "Fragile items. Handle with care.",
+      "distanceKm": 1.8,
+      "eta": "7 mins",
+      "attemptCount": 0,
+      "maxAttempts": 3
+    }
+  ]
+}
