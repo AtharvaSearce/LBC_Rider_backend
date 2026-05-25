@@ -2,17 +2,38 @@
   "name": "lbc_rider_backend",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "dist/server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "nodemon --exec npx ts-node src/server.ts",
+    "build": "prisma generate && tsc",
+    "start": "node dist/server.js",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:push": "prisma db push",
+    "db:seed": "npx ts-node prisma/seed.ts",
+    "db:studio": "prisma studio"
+  },
+  "prisma": {
+    "seed": "npx ts-node prisma/seed.ts"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "@prisma/client": "^6.19.3",
     "cors": "^2.8.6",
-    "express": "^5.2.1",
+    "dotenv": "^16.4.7",
+    "express": "^4.22.2",
+    "nodemon": "^3.1.14",
     "uuid": "^14.0.0"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/node": "^25.9.0",
+    "prisma": "^6.19.3",
+    "ts-node": "^10.9.2",
+    "typescript": "^6.0.3"
   }
 }

@@ -1,0 +1,79 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum ManifestStatus {
+  pending
+  in_progress
+  completed
+}
+
+enum StopStatus {
+  pending
+  in_progress
+  completed
+  failed
+}
+
+model Rider {
+  id        String     @id
+  name      String
+  phone     String
+  hubName   String
+  zone      String
+  manifests Manifest[]
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+}
+
+model Manifest {
+  id             String         @id @default(cuid())
+  manifestId     String         @unique
+  routeName      String?
+  riderId        String
+  rider          Rider          @relation(fields: [riderId], references: [id], onDelete: Cascade)
+  date           DateTime
+  status         ManifestStatus @default(pending)
+  totalStops     Int
+  completedStops Int            @default(0)
+  failedStops    Int            @default(0)
+  stops          Stop[]
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  @@index([riderId])
+  @@index([date])
+}
+
+model Stop {
+  id                  String     @id @default(cuid())
+  stopCode            String
+  manifestId          String
+  manifest            Manifest   @relation(fields: [manifestId], references: [id], onDelete: Cascade)
+  sequence            Int
+  status              StopStatus @default(pending)
+  recipientName       String
+  recipientPhone      String
+  addressText         String
+  addressLat          Float
+  addressLng          Float
+  trackingNumber      String
+  serviceType         String
+  codAmount           Decimal    @db.Decimal(10, 2)
+  packageDetails      String?
+  specialInstructions String?
+  distanceKm          Float?
+  eta                 String?
+  attemptCount        Int        @default(0)
+  maxAttempts         Int        @default(3)
+  createdAt           DateTime   @default(now())
+  updatedAt           DateTime   @updatedAt
+
+  @@unique([manifestId, stopCode])
+  @@index([manifestId])
+}
