@@ -4,6 +4,11 @@ declare global {
       rider?: {
         riderId: string;
       };
+      admin?: {
+        adminId: string;
+        email: string;
+        role: 'admin';
+      };
     }
   }
 }

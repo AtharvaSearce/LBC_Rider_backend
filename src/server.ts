@@ -6,6 +6,11 @@ import express from 'express';
 import cors from 'cors';
 import { connectDatabase } from './config/database';
 import manifestRouter from './routes/manifest';
+import zoneRouter from './routes/zones';
+import hubRouter from './routes/hubs';
+import adminAuthRouter from './routes/admin-auth';
+import adminManifestRouter from './routes/admin-manifest';
+
 
 const app = express();
 const PORT = process.env.PORT || 8000;
@@ -19,6 +24,10 @@ app.get('/health', (_req, res) => {
 });
 
 app.use('/api/manifest', manifestRouter);
+app.use('/api/zones', zoneRouter);
+app.use('/api/hubs', hubRouter);
+app.use('/api/admin-auth', adminAuthRouter);
+app.use('/api/admin/manifests', adminManifestRouter);
 
 async function start() {
   try {
