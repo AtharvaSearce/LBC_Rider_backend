@@ -19,6 +19,7 @@ const PUBLIC_PATHS = [
   '/health',
   '/api/rider-auth/login',
   '/api/admin-auth',
+  '/api/geocode',
   // Admin routes — skip rider JWT; protected by adminMiddleware instead
   '/api/admin',
   '/api/zones',

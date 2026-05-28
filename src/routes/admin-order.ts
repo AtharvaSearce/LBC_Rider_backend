@@ -1,6 +1,5 @@
 import { Router, Request, Response } from 'express';
 import { OrderStatus, Prisma } from '@prisma/client';
-import { v4 as uuidv4 } from 'uuid';
 import { prisma } from '../lib/prisma';
 
 const router = Router();
@@ -28,10 +27,6 @@ function getOrderId(req: Request): string | null {
 
 function isOrderStatus(value: string): value is OrderStatus {
   return Object.values(OrderStatus).includes(value as OrderStatus);
-}
-
-function generateStopId(): string {
-  return `stop-${uuidv4().slice(0, 8)}`;
 }
 
 async function resolveHubId(
@@ -86,7 +81,11 @@ function validateRequiredOrderFields(item: OrderInput): string | null {
   return null;
 }
 
-async function buildOrderCreateData(item: OrderInput) {
+async function buildOrderCreateData(
+  item: OrderInput
+): Promise<
+  { data: Prisma.OrderUncheckedCreateInput } | { error: string }
+> {
   const validationError = validateRequiredOrderFields(item);
   if (validationError) {
     return { error: validationError };
@@ -97,25 +96,24 @@ async function buildOrderCreateData(item: OrderInput) {
     return { error: hubResult.error };
   }
 
-  return {
-    data: {
-      trackingNumber: item.trackingNumber!,
-      stopId: generateStopId(),
-      recipientName: item.recipient!.name!,
-      recipientPhone: item.recipient!.phone!,
-      recipientField: item.recipient!.field ?? '',
-      addressText: item.address!.text!,
-      addressLat: item.address!.lat ?? 0,
-      addressLng: item.address!.lng ?? 0,
-      addressGeocoded: item.address!.geocoded ?? false,
-      serviceType: item.serviceType ?? 'Standard',
-      codAmount: item.codAmount ?? 0,
-      packageDetails: item.packageDetails ?? '',
-      specialInstructions: item.specialInstructions ?? '',
-      hubId: hubResult.hubId,
-      status: OrderStatus.available,
-    },
-  };
+  const data = {
+    trackingNumber: item.trackingNumber!,
+    recipientName: item.recipient!.name!,
+    recipientPhone: item.recipient!.phone!,
+    recipientField: item.recipient!.field ?? '',
+    addressText: item.address!.text!,
+    addressLat: item.address!.lat ?? 0,
+    addressLng: item.address!.lng ?? 0,
+    addressGeocoded: item.address!.geocoded ?? false,
+    serviceType: item.serviceType ?? 'Standard',
+    codAmount: item.codAmount ?? 0,
+    packageDetails: item.packageDetails ?? '',
+    specialInstructions: item.specialInstructions ?? '',
+    hubId: hubResult.hubId,
+    status: OrderStatus.available,
+  } satisfies Omit<Prisma.OrderUncheckedCreateInput, 'stopId'>;
+
+  return { data: data as Prisma.OrderUncheckedCreateInput };
 }
 
 async function buildOrderUpdateData(

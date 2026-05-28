@@ -15,6 +15,7 @@ import adminOrderRouter from './routes/admin-order';
 import adminStopsRouter from './routes/admin-stops';
 import attendanceRouter from './routes/attendance';
 import riderAuthRouter from './routes/rider-auth';
+import geocodeRouter from './routes/geocode';
 import { authMiddleware } from './middleware/rider-auth';
 import { adminMiddleware } from './middleware/admin-auth';
 
@@ -40,6 +41,7 @@ app.use('/api/admin/riders', adminMiddleware, adminRiderRouter);
 app.use('/api/admin/orders', adminMiddleware, adminOrderRouter);
 app.use('/api/admin/stops', adminMiddleware, adminStopsRouter);
 app.use('/api/rider-auth', riderAuthRouter);
+app.use('/api/geocode', geocodeRouter);
 app.use('/api/attendance', attendanceRouter);
 
 async function start() {
