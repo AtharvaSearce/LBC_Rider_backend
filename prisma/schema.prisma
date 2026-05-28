@@ -104,7 +104,6 @@ model Manifest {
 model Order {
   id                  String      @id @default(cuid())
   trackingNumber      String      @unique
-  stopId              String      @unique
   recipientName       String
   recipientPhone      String
   recipientField      String      @default("")
@@ -121,7 +120,8 @@ model Order {
   status              OrderStatus @default(available)
   assignedManifestId  String?
   assignedManifest    Manifest?   @relation(fields: [assignedManifestId], references: [id], onDelete: SetNull)
-  stop                Stop?
+  // Prisma back-relation only — stop IDs live on Stop.orderId, not on Order
+  stops               Stop[]
   createdAt           DateTime    @default(now())
   updatedAt           DateTime    @updatedAt
 
@@ -135,8 +135,8 @@ model Stop {
   stopId         String          @unique
   manifestId     String
   manifest       Manifest        @relation(fields: [manifestId], references: [id], onDelete: Cascade)
-  orderId        String?         @unique
-  order          Order?          @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  orderId        String
+  order          Order           @relation(fields: [orderId], references: [id], onDelete: Restrict)
   sequence       Int
   status         StopStatus      @default(pending)
   distance       Float           @default(0)
@@ -147,6 +147,7 @@ model Stop {
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
 
+  @@unique([manifestId, orderId])
   @@unique([manifestId, sequence])
   @@index([manifestId])
   @@index([orderId])

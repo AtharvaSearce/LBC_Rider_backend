@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import jwt from 'jsonwebtoken';
+import { signAdminToken } from '../middleware/admin-auth';
 
 const router = Router();
 
@@ -29,22 +29,17 @@ router.post('/login', async (req: Request, res: Response) => {
       return;
     }
 
-    const secret = process.env.JWT_SECRET;
-    if (!secret) {
+    let token: string;
+    try {
+      token = signAdminToken({
+        adminId: ADMIN_CREDENTIALS.adminId,
+        email: ADMIN_CREDENTIALS.email,
+      });
+    } catch {
       console.error('[Admin Auth] JWT_SECRET is not configured');
       res.status(500).json({ error: 'Internal server error' });
       return;
     }
-
-    const token = jwt.sign(
-      {
-        adminId: ADMIN_CREDENTIALS.adminId,
-        email: ADMIN_CREDENTIALS.email,
-        role: 'admin',
-      },
-      secret,
-      { expiresIn: '12h' }
-    );
 
     res.json({
       token,
