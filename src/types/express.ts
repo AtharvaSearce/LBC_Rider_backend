@@ -1,4 +1,3 @@
-import './types/express';
 import { AdminTokenPayload } from '../middleware/admin-auth';
 import { RiderTokenPayload } from '../middleware/rider-auth';
 
