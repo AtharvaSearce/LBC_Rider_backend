@@ -18,31 +18,82 @@ enum StopStatus {
   in_progress
   completed
   failed
+  rts
+  reschedule
+}
+
+enum OrderStatus {
+  available
+  assigned
+  delivered
+  returned
+}
+
+enum DeliveryOutcome {
+  delivered
+  failed
+}
+
+enum DeliveryNextAction {
+  reschedule
+  rts
+  retry
+}
+
+model Zone {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  hubs      Hub[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Hub {
+  id           String   @id @default(cuid())
+  name         String   @unique
+  lat          Float
+  lng          Float
+  radiusMeters Int      @default(200)
+  zoneId       String
+  zone         Zone     @relation(fields: [zoneId], references: [id], onDelete: Restrict)
+  riders       Rider[]
+  orders       Order[]
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([zoneId])
 }
 
 model Rider {
-  id        String     @id
-  name      String
-  phone     String
-  hubName   String
-  zone      String
-  manifests Manifest[]
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
+  id           String     @id @default(cuid())
+  employeeId   String     @unique
+  name         String
+  email        String     @unique
+  phone        String
+  passwordHash String
+  hubId        String
+  hub          Hub        @relation(fields: [hubId], references: [id], onDelete: Restrict)
+  vehicleType  String     @default("motorcycle")
+  isActive     Boolean    @default(true)
+  manifests    Manifest[]
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@index([hubId])
 }
 
 model Manifest {
   id             String         @id @default(cuid())
   manifestId     String         @unique
-  routeName      String?
   riderId        String
   rider          Rider          @relation(fields: [riderId], references: [id], onDelete: Cascade)
-  date           DateTime
+  date           DateTime       @db.Date
   status         ManifestStatus @default(pending)
   totalStops     Int
   completedStops Int            @default(0)
   failedStops    Int            @default(0)
   stops          Stop[]
+  assignedOrders Order[]
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
 
@@ -50,30 +101,71 @@ model Manifest {
   @@index([date])
 }
 
-model Stop {
-  id                  String     @id @default(cuid())
-  stopCode            String
-  manifestId          String
-  manifest            Manifest   @relation(fields: [manifestId], references: [id], onDelete: Cascade)
-  sequence            Int
-  status              StopStatus @default(pending)
+model Order {
+  id                  String      @id @default(cuid())
+  trackingNumber      String      @unique
   recipientName       String
   recipientPhone      String
+  recipientField      String      @default("")
   addressText         String
   addressLat          Float
   addressLng          Float
-  trackingNumber      String
+  addressGeocoded     Boolean     @default(false)
   serviceType         String
-  codAmount           Decimal    @db.Decimal(10, 2)
-  packageDetails      String?
-  specialInstructions String?
-  distanceKm          Float?
-  eta                 String?
-  attemptCount        Int        @default(0)
-  maxAttempts         Int        @default(3)
-  createdAt           DateTime   @default(now())
-  updatedAt           DateTime   @updatedAt
+  codAmount           Decimal     @default(0) @db.Decimal(10, 2)
+  packageDetails      String      @default("")
+  specialInstructions String      @default("")
+  hubId               String
+  hub                 Hub         @relation(fields: [hubId], references: [id], onDelete: Restrict)
+  status              OrderStatus @default(available)
+  assignedManifestId  String?
+  assignedManifest    Manifest?   @relation(fields: [assignedManifestId], references: [id], onDelete: SetNull)
+  // Prisma back-relation only — stop IDs live on Stop.orderId, not on Order
+  stops               Stop[]
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
 
-  @@unique([manifestId, stopCode])
+  @@index([hubId])
+  @@index([assignedManifestId])
+  @@index([status])
+}
+
+model Stop {
+  id             String          @id @default(cuid())
+  stopId         String          @unique
+  manifestId     String
+  manifest       Manifest        @relation(fields: [manifestId], references: [id], onDelete: Cascade)
+  orderId        String
+  order          Order           @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  sequence       Int
+  status         StopStatus      @default(pending)
+  distance       Float           @default(0)
+  eta            String          @default("")
+  attemptCount   Int             @default(0)
+  maxAttempts    Int             @default(3)
+  deliveryResult DeliveryResult?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  @@unique([manifestId, orderId])
+  @@unique([manifestId, sequence])
   @@index([manifestId])
+  @@index([orderId])
+}
+
+model DeliveryResult {
+  id             String              @id @default(cuid())
+  stopId         String              @unique
+  stop           Stop                @relation(fields: [stopId], references: [id], onDelete: Cascade)
+  outcome        DeliveryOutcome
+  timestamp      DateTime
+  signatureUri   String?
+  photoUri       String?
+  codCollected   Decimal?            @db.Decimal(10, 2)
+  failureReason  String?
+  failureNotes   String?
+  nextAction     DeliveryNextAction?
+  overrideReason String?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
 }

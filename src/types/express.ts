@@ -1,9 +1,12 @@
+import './types/express';
+import { AdminTokenPayload } from '../middleware/admin-auth';
+import { RiderTokenPayload } from '../middleware/rider-auth';
+
 declare global {
   namespace Express {
     interface Request {
-      rider?: {
-        riderId: string;
-      };
+      rider?: RiderTokenPayload;
+      admin?: AdminTokenPayload;
     }
   }
 }
