@@ -35,14 +35,14 @@ app.get('/health', (_req, res) => {
 });
 
 app.use('/api/manifest', manifestRouter);
-app.use('/api/zones', adminMiddleware, zoneRouter);
-app.use('/api/hubs', adminMiddleware, hubRouter);
-app.use('/api/admin-auth', adminAuthRouter);
+app.use('/api/admin/zones', adminMiddleware, zoneRouter);
+app.use('/api/admin/hubs', adminMiddleware, hubRouter);
+app.use('/api/admin/auth', adminAuthRouter);
 app.use('/api/admin/manifests', adminMiddleware, adminManifestRouter);
 app.use('/api/admin/riders', adminMiddleware, adminRiderRouter);
 app.use('/api/admin/orders', adminMiddleware, adminOrderRouter);
 app.use('/api/admin/stops', adminMiddleware, adminStopsRouter);
-app.use('/api/rider-auth', riderAuthRouter);
+app.use('/api/auth', riderAuthRouter);
 app.use('/api/geocode', geocodeRouter);
 app.use('/api/attendance', attendanceRouter);
 app.use('/api/delivery', deliveryRouter);

@@ -17,8 +17,8 @@ interface DecodedRiderToken extends RiderTokenPayload {
 
 const PUBLIC_PATHS = [
   '/health',
-  '/api/rider-auth/login',
-  '/api/admin-auth',
+  '/api/auth/login',
+  '/api/admin/auth',
   '/api/geocode',
   // Admin routes — skip rider JWT; protected by adminMiddleware instead
   '/api/admin',

@@ -25,15 +25,19 @@ const riderLoginSelect = {
 } as const;
 
 router.post('/login', async (req: Request, res: Response) => {
+  const t0 = Date.now();
+  console.log('[Rider Auth] POST /login — email=%s', req.body?.email);
   try {
     const { email, password } = req.body;
 
     if (!email || !password) {
+      console.warn('[Rider Auth] Login rejected: missing email or password');
       res.status(400).json({ error: 'Email and password are required' });
       return;
     }
 
     const normalizedEmail = String(email).toLowerCase().trim();
+    console.log('[Rider Auth] Looking up rider email=%s', normalizedEmail);
 
     const rider = await prisma.rider.findUnique({
       where: { email: normalizedEmail },
@@ -41,17 +45,23 @@ router.post('/login', async (req: Request, res: Response) => {
     });
 
     if (!rider) {
+      console.warn('[Rider Auth] No rider found for email=%s', normalizedEmail);
       res.status(401).json({ error: 'Invalid credentials' });
       return;
     }
 
+    console.log('[Rider Auth] Found rider id=%s empId=%s hub=%s active=%s',
+      rider.id, rider.employeeId, rider.hub?.name, rider.isActive);
+
     const isMatch = await bcrypt.compare(password, rider.passwordHash);
     if (!isMatch) {
+      console.warn('[Rider Auth] Password mismatch for rider id=%s', rider.id);
       res.status(401).json({ error: 'Invalid credentials' });
       return;
     }
 
     if (!rider.isActive) {
+      console.warn('[Rider Auth] Deactivated rider attempted login id=%s', rider.id);
       res.status(403).json({ error: 'Account is deactivated' });
       return;
     }
@@ -71,12 +81,15 @@ router.post('/login', async (req: Request, res: Response) => {
 
     const { passwordHash: _passwordHash, ...riderPublic } = rider;
 
+    console.log('[Rider Auth] Login success id=%s empId=%s (%dms)',
+      rider.id, rider.employeeId, Date.now() - t0);
+
     res.json({
       token,
       rider: riderPublic,
     });
   } catch (err) {
-    console.error('[Rider Auth] Login error:', err);
+    console.error('[Rider Auth] Login error (%dms):', Date.now() - t0, err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
