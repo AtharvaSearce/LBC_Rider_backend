@@ -16,6 +16,8 @@ import adminStopsRouter from './routes/admin-stops';
 import attendanceRouter from './routes/attendance';
 import riderAuthRouter from './routes/rider-auth';
 import geocodeRouter from './routes/geocode';
+import adminDashboardRouter from './routes/admin-dashboard';
+import deliveryRouter from './routes/delivery';
 import { authMiddleware } from './middleware/rider-auth';
 import { adminMiddleware } from './middleware/admin-auth';
 
@@ -43,6 +45,8 @@ app.use('/api/admin/stops', adminMiddleware, adminStopsRouter);
 app.use('/api/rider-auth', riderAuthRouter);
 app.use('/api/geocode', geocodeRouter);
 app.use('/api/attendance', attendanceRouter);
+app.use('/api/delivery', deliveryRouter);
+app.use('/api/admin/dashboard', adminMiddleware, adminDashboardRouter);
 
 async function start() {
   try {
