@@ -279,7 +279,7 @@ Use the available functions to fulfill the rider's request. Be concise and helpf
 
     const parts = response.candidates?.[0]?.content?.parts || [];
     const fcPart = parts.find(
-      (p): p is { functionCall: { name: string; args: Record<string, unknown> } } =>
+      (p: any): p is { functionCall: { name: string; args: Record<string, unknown> } } =>
         'functionCall' in p && !!p.functionCall
     );
 

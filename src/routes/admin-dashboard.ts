@@ -90,6 +90,7 @@ router.get('/', async (_req: Request, res: Response) => {
           select: {
             trackingNumber: true,
             recipientName: true,
+            addressText: true,
             serviceType: true,
             codAmount: true,
           },
