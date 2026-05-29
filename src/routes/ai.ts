@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { GoogleGenerativeAI, SchemaType } from '@google/generative-ai';
 import { StopStatus } from '@prisma/client';
 import { prisma } from '../lib/prisma';
+import logger from '../utils/logger';
 
 const router = Router();
 
@@ -289,6 +290,8 @@ Use the available functions to fulfill the rider's request. Be concise and helpf
       const args = fc.args || {};
       let actionResult: unknown;
 
+      logger.info('[AI] Function call dispatched', { riderId, intent: name, args });
+
       switch (name) {
         case 'optimize_route':
           actionResult = await executeOptimizeRoute(
@@ -333,6 +336,7 @@ Use the available functions to fulfill the rider's request. Be concise and helpf
         response.candidates?.[0]?.content?.parts?.[0]?.text ||
         "I'm not sure how to help with that. Try asking about your route, deliveries, or optimization.";
 
+      logger.debug('[AI] Conversational response', { riderId });
       res.json({
         intent: 'CONVERSATIONAL',
         message: textResponse,
@@ -341,7 +345,7 @@ Use the available functions to fulfill the rider's request. Be concise and helpf
       });
     }
   } catch (err) {
-    console.error('[AI] Command error:', err);
+    logger.error('[AI] Command error', { err, riderId: req.rider?.riderId });
     res.status(500).json({ error: 'AI processing failed' });
   }
 });

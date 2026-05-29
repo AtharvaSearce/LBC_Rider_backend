@@ -6,6 +6,7 @@ import {
 } from '@prisma/client';
 import { v4 as uuidv4 } from 'uuid';
 import { prisma } from '../lib/prisma';
+import logger from '../utils/logger';
 
 const router = Router();
 
@@ -151,7 +152,7 @@ router.post('/cleanup', async (req: Request, res: Response) => {
 
     res.json({ cleaned });
   } catch (err) {
-    console.error('[Manifest] Cleanup error:', err);
+    logger.error('[Manifest] Cleanup error', { err });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -180,7 +181,7 @@ router.get('/history', async (req: Request, res: Response) => {
 
     res.json({ manifests });
   } catch (err) {
-    console.error('[Manifest] History error:', err);
+    logger.error('[Manifest] History error', { err });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -224,7 +225,7 @@ router.get('/scan/:trackingNumber', async (req: Request, res: Response) => {
 
     res.json(formatOrderForScan(order));
   } catch (err) {
-    console.error('[Manifest] Scan lookup error:', err);
+    logger.error('[Manifest] Scan lookup error', { err });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -313,9 +314,10 @@ router.post('/create', async (req: Request, res: Response) => {
       });
     });
 
+    logger.info('[Manifest] Created manifest', { manifestId: businessManifestId, riderId, stopCount: orders.length });
     res.status(201).json(populatedManifest);
   } catch (err) {
-    console.error('[Manifest] Create error:', err);
+    logger.error('[Manifest] Create error', { err });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -363,10 +365,10 @@ router.post('/sync', async (req: Request, res: Response) => {
           geocodedCount++;
         }
       } catch (geocodeErr) {
-        console.error(
-          `[Manifest] Geocode failed for order ${order.trackingNumber}:`,
-          geocodeErr
-        );
+        logger.error('[Manifest] Geocode failed for order', {
+          trackingNumber: order.trackingNumber,
+          err: geocodeErr,
+        });
       }
     }
 
@@ -376,7 +378,7 @@ router.post('/sync', async (req: Request, res: Response) => {
       totalUngeocoded: ungeocoded.length,
     });
   } catch (err) {
-    console.error('[Manifest] Sync error:', err);
+    logger.error('[Manifest] Sync error', { err });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -414,7 +416,7 @@ router.get('/stop/:stopId', async (req: Request, res: Response) => {
 
     res.json(stop);
   } catch (err) {
-    console.error('[Manifest] Get stop error:', err);
+    logger.error('[Manifest] Get stop error', { err });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -524,7 +526,7 @@ router.delete('/stop/:stopId', async (req: Request, res: Response) => {
 
     res.json(populatedManifest);
   } catch (err) {
-    console.error('[Manifest] Delete stop error:', err);
+    logger.error('[Manifest] Delete stop error', { err });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -558,7 +560,7 @@ router.get('/', async (req: Request, res: Response) => {
 
     res.json(manifest);
   } catch (err) {
-    console.error('[Manifest] Get error:', err);
+    logger.error('[Manifest] Get error', { err });
     res.status(500).json({ error: 'Internal server error' });
   }
 });

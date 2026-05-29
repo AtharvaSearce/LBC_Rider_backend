@@ -8,6 +8,7 @@ import {
   StopStatus,
 } from '@prisma/client';
 import { prisma } from '../lib/prisma';
+import logger from '../utils/logger';
 
 const router = Router();
 
@@ -151,7 +152,7 @@ router.get('/history', async (req: Request, res: Response) => {
       },
     });
   } catch (err) {
-    console.error('[Delivery] History error:', err);
+    logger.error('[Delivery] History error', { err });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -249,13 +250,14 @@ router.post('/:stopId/complete', async (req: Request, res: Response) => {
 
     const nextStop = await promoteNextPendingStop(stop.manifestId);
 
+    logger.info('[Delivery] Stop completed', { stopId, riderId: req.rider?.riderId });
     res.json({
       message: 'Delivery completed successfully',
       completedStop,
       nextStop: nextStop || null,
     });
   } catch (err) {
-    console.error('[Delivery] Complete error:', err);
+    logger.error('[Delivery] Complete error', { err, stopId: req.params.stopId });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -367,13 +369,20 @@ router.post('/:stopId/fail', async (req: Request, res: Response) => {
       failed: `Delivery failed (attempt ${newAttemptCount}/${stop.maxAttempts}). Will retry later in route.`,
     };
 
+    logger.info('[Delivery] Stop failed', {
+      stopId,
+      newStatus,
+      attemptCount: newAttemptCount,
+      riderId: req.rider?.riderId,
+    });
+
     res.json({
       message: statusMessages[newStatus] || statusMessages.failed,
       failedStop,
       nextStop: nextStop || null,
     });
   } catch (err) {
-    console.error('[Delivery] Fail error:', err);
+    logger.error('[Delivery] Fail error', { err, stopId: req.params.stopId });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -437,9 +446,10 @@ router.post('/:stopId/rts', async (req: Request, res: Response) => {
       });
     });
 
+    logger.info('[Delivery] Stop marked RTS', { stopId, riderId: req.rider?.riderId });
     res.json({ message: 'Stop marked as Return to Sender', stop: updatedStop });
   } catch (err) {
-    console.error('[Delivery] RTS error:', err);
+    logger.error('[Delivery] RTS error', { err, stopId: req.params.stopId });
     res.status(500).json({ error: 'Internal server error' });
   }
 });

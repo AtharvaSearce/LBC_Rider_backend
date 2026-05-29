@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { Prisma, StopStatus } from '@prisma/client';
 import { prisma } from '../lib/prisma';
+import logger from '../utils/logger';
 
 const router = Router();
 
@@ -164,6 +165,11 @@ router.post('/optimize', async (req: Request, res: Response) => {
           });
         }
 
+        logger.info('[Route] Optimized via Fleet Routing API', {
+          manifestId: manifestParam,
+          stopCount: newOrder.length,
+          priorityStopId,
+        });
         res.json({
           newOrder,
           message: priorityStopId
@@ -173,7 +179,7 @@ router.post('/optimize', async (req: Request, res: Response) => {
         return;
       }
     } catch (fleetErr) {
-      console.warn('[Route] Fleet Routing API failed, using local optimization:', fleetErr);
+      logger.warn('[Route] Fleet Routing API failed, using local optimization', { err: fleetErr });
     }
 
     let ordered = [...pendingStops];
@@ -196,6 +202,7 @@ router.post('/optimize', async (req: Request, res: Response) => {
       newOrder.push(ordered[i].stopId);
     }
 
+    logger.info('[Route] Optimized', { manifestId: manifestParam, stopCount: pendingStops.length, priorityStopId });
     res.json({
       newOrder,
       message: priorityStopId
@@ -203,7 +210,7 @@ router.post('/optimize', async (req: Request, res: Response) => {
         : 'Route reordered (local optimization)',
     });
   } catch (err) {
-    console.error('[Route] Optimize error:', err);
+    logger.error('[Route] Optimize error', { err });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -281,7 +288,7 @@ router.post('/compute', async (req: Request, res: Response) => {
       res.status(404).json({ error: 'No route found', details: data });
     }
   } catch (err) {
-    console.error('[Route] Compute error:', err);
+    logger.error('[Route] Compute error', { err });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -336,7 +343,7 @@ router.post('/directions', async (req: Request, res: Response) => {
     const data = await response.json();
     res.json(data);
   } catch (err) {
-    console.error('[Route] Directions error:', err);
+    logger.error('[Route] Directions error', { err });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -399,12 +406,13 @@ router.post('/reorder', async (req: Request, res: Response) => {
       });
     }
 
+    logger.info('[Route] Reordered', { manifestId: manifestParam, stopCount: stopOrder.length });
     res.json({
       message: 'Stop order updated successfully',
       stopOrder,
     });
   } catch (err) {
-    console.error('[Route] Reorder error:', err);
+    logger.error('[Route] Reorder error', { err });
     res.status(500).json({ error: 'Internal server error' });
   }
 });

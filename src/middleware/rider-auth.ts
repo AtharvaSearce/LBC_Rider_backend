@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
+import logger from '../utils/logger';
 
 export interface RiderTokenPayload {
   riderId: string;
@@ -64,6 +65,7 @@ export function authMiddleware(
 
   const header = req.headers.authorization;
   if (!header?.startsWith('Bearer ')) {
+    logger.warn('[RiderAuth] Missing or invalid authorization header', { path: req.path, method: req.method });
     res.status(401).json({ error: 'Missing or invalid authorization header' });
     return;
   }
@@ -71,6 +73,7 @@ export function authMiddleware(
   const token = header.slice(7);
   const secret = getJwtSecret();
   if (!secret) {
+    logger.error('[RiderAuth] JWT_SECRET not set');
     res.status(500).json({ error: 'Server misconfiguration: JWT_SECRET not set' });
     return;
   }
@@ -79,6 +82,7 @@ export function authMiddleware(
     const decoded = jwt.verify(token, secret) as DecodedRiderToken;
 
     if (decoded.role !== 'rider') {
+      logger.warn('[RiderAuth] Token role mismatch', { role: decoded.role, path: req.path });
       res.status(401).json({ error: 'Invalid or expired token' });
       return;
     }
@@ -94,6 +98,7 @@ export function authMiddleware(
 
     next();
   } catch {
+    logger.warn('[RiderAuth] Invalid or expired token', { path: req.path });
     res.status(401).json({ error: 'Invalid or expired token' });
   }
 }

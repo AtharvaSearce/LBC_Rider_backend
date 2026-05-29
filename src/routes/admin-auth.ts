@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { signAdminToken } from '../middleware/admin-auth';
+import logger from '../utils/logger';
 
 const router = Router();
 
@@ -25,6 +26,7 @@ router.post('/login', async (req: Request, res: Response) => {
       normalizedEmail !== ADMIN_CREDENTIALS.email ||
       password !== ADMIN_CREDENTIALS.password
     ) {
+      logger.warn('[Admin Auth] Invalid login attempt', { email: normalizedEmail });
       res.status(401).json({ error: 'Invalid admin credentials' });
       return;
     }
@@ -36,10 +38,12 @@ router.post('/login', async (req: Request, res: Response) => {
         email: ADMIN_CREDENTIALS.email,
       });
     } catch {
-      console.error('[Admin Auth] JWT_SECRET is not configured');
+      logger.error('[Admin Auth] JWT_SECRET is not configured');
       res.status(500).json({ error: 'Internal server error' });
       return;
     }
+
+    logger.info('[Admin Auth] Login success', { adminId: ADMIN_CREDENTIALS.adminId, email: normalizedEmail });
 
     res.json({
       token,
@@ -51,7 +55,7 @@ router.post('/login', async (req: Request, res: Response) => {
       },
     });
   } catch (err) {
-    console.error('[Admin Auth] Login error:', err);
+    logger.error('[Admin Auth] Login error', { err });
     res.status(500).json({ error: 'Internal server error' });
   }
 });

@@ -4,6 +4,8 @@ dotenv.config();
 
 import express from 'express';
 import cors from 'cors';
+import logger from './utils/logger';
+import httpLogger from './middleware/httpLogger';
 import { connectDatabase } from './config/database';
 import manifestRouter from './routes/manifest';
 import zoneRouter from './routes/zones';
@@ -30,6 +32,7 @@ const PORT = process.env.PORT || 8000;
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
+app.use(httpLogger);
 app.use(authMiddleware);
 
 app.get('/health', (_req, res) => {
@@ -56,10 +59,10 @@ async function start() {
   try {
     await connectDatabase();
     app.listen(PORT, () => {
-      console.log(`[Server] LBC Rider Backend running on port ${PORT}`);
+      logger.info('LBC Rider Backend started', { port: PORT, env: process.env.NODE_ENV ?? 'development' });
     });
   } catch (err) {
-    console.error('[Server] Failed to start:', err);
+    logger.error('Failed to start server', { err });
     process.exit(1);
   }
 }

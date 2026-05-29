@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import { prisma } from '../lib/prisma';
 import { signRiderToken } from '../middleware/rider-auth';
+import logger from '../utils/logger';
 
 const router = Router();
 
@@ -26,18 +27,18 @@ const riderLoginSelect = {
 
 router.post('/login', async (req: Request, res: Response) => {
   const t0 = Date.now();
-  console.log('[Rider Auth] POST /login — email=%s', req.body?.email);
+  logger.info('[Rider Auth] POST /login', { email: req.body?.email });
   try {
     const { email, password } = req.body;
 
     if (!email || !password) {
-      console.warn('[Rider Auth] Login rejected: missing email or password');
+      logger.warn('[Rider Auth] Login rejected: missing email or password');
       res.status(400).json({ error: 'Email and password are required' });
       return;
     }
 
     const normalizedEmail = String(email).toLowerCase().trim();
-    console.log('[Rider Auth] Looking up rider email=%s', normalizedEmail);
+    logger.debug('[Rider Auth] Looking up rider', { email: normalizedEmail });
 
     const rider = await prisma.rider.findUnique({
       where: { email: normalizedEmail },
@@ -45,23 +46,27 @@ router.post('/login', async (req: Request, res: Response) => {
     });
 
     if (!rider) {
-      console.warn('[Rider Auth] No rider found for email=%s', normalizedEmail);
+      logger.warn('[Rider Auth] No rider found', { email: normalizedEmail });
       res.status(401).json({ error: 'Invalid credentials' });
       return;
     }
 
-    console.log('[Rider Auth] Found rider id=%s empId=%s hub=%s active=%s',
-      rider.id, rider.employeeId, rider.hub?.name, rider.isActive);
+    logger.debug('[Rider Auth] Found rider', {
+      riderId: rider.id,
+      employeeId: rider.employeeId,
+      hub: rider.hub?.name,
+      isActive: rider.isActive,
+    });
 
     const isMatch = await bcrypt.compare(password, rider.passwordHash);
     if (!isMatch) {
-      console.warn('[Rider Auth] Password mismatch for rider id=%s', rider.id);
+      logger.warn('[Rider Auth] Password mismatch', { riderId: rider.id });
       res.status(401).json({ error: 'Invalid credentials' });
       return;
     }
 
     if (!rider.isActive) {
-      console.warn('[Rider Auth] Deactivated rider attempted login id=%s', rider.id);
+      logger.warn('[Rider Auth] Deactivated rider attempted login', { riderId: rider.id });
       res.status(403).json({ error: 'Account is deactivated' });
       return;
     }
@@ -74,22 +79,25 @@ router.post('/login', async (req: Request, res: Response) => {
         hubId: rider.hubId,
       });
     } catch {
-      console.error('[Rider Auth] JWT_SECRET is not configured');
+      logger.error('[Rider Auth] JWT_SECRET is not configured');
       res.status(500).json({ error: 'Internal server error' });
       return;
     }
 
     const { passwordHash: _passwordHash, ...riderPublic } = rider;
 
-    console.log('[Rider Auth] Login success id=%s empId=%s (%dms)',
-      rider.id, rider.employeeId, Date.now() - t0);
+    logger.info('[Rider Auth] Login success', {
+      riderId: rider.id,
+      employeeId: rider.employeeId,
+      durationMs: Date.now() - t0,
+    });
 
     res.json({
       token,
       rider: riderPublic,
     });
   } catch (err) {
-    console.error('[Rider Auth] Login error (%dms):', Date.now() - t0, err);
+    logger.error('[Rider Auth] Login error', { err, durationMs: Date.now() - t0 });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -125,14 +133,15 @@ router.post('/refresh', async (req: Request, res: Response) => {
         hubId: rider.hubId,
       });
     } catch {
-      console.error('[Rider Auth] JWT_SECRET is not configured');
+      logger.error('[Rider Auth] JWT_SECRET is not configured');
       res.status(500).json({ error: 'Internal server error' });
       return;
     }
 
+    logger.info('[Rider Auth] Token refreshed', { riderId: rider.riderId });
     res.json({ token });
   } catch (err) {
-    console.error('[Rider Auth] Refresh error:', err);
+    logger.error('[Rider Auth] Refresh error', { err });
     res.status(500).json({ error: 'Internal server error' });
   }
 });

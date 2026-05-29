@@ -1,4 +1,5 @@
 import { prisma } from '../lib/prisma';
+import logger from '../utils/logger';
 
 export async function connectDatabase(): Promise<void> {
   if (!process.env.DATABASE_URL) {
@@ -7,15 +8,15 @@ export async function connectDatabase(): Promise<void> {
 
   try {
     await prisma.$connect();
-    console.log('[PostgreSQL] Connected via Prisma');
+    logger.info('[PostgreSQL] Connected via Prisma');
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error('[PostgreSQL] Connection error:', message);
+    logger.error('[PostgreSQL] Connection error', { message });
     throw err;
   }
 }
 
 export async function disconnectDatabase(): Promise<void> {
   await prisma.$disconnect();
-  console.log('[PostgreSQL] Disconnected');
+  logger.info('[PostgreSQL] Disconnected');
 }
