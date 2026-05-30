@@ -98,16 +98,20 @@ router.post('/cleanup', async (req: Request, res: Response) => {
       return;
     }
 
-    const todayMidnight = new Date();
-    todayMidnight.setHours(0, 0, 0, 0);
+    const now = new Date();
+    const todayUTC = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
+
+    console.log('[Manifest] Cleanup — riderId=%s cutoff=%s', riderId, todayUTC.toISOString());
 
     const staleManifests = await prisma.manifest.findMany({
       where: {
         riderId,
         status: { in: [ManifestStatus.pending, ManifestStatus.in_progress] },
-        createdAt: { lt: todayMidnight },
+        date: { lt: todayUTC },
       },
     });
+
+    console.log('[Manifest] Found %d stale manifest(s)', staleManifests.length);
 
     let cleaned = 0;
     for (const manifest of staleManifests) {
@@ -150,6 +154,7 @@ router.post('/cleanup', async (req: Request, res: Response) => {
       cleaned++;
     }
 
+    console.log('[Manifest] Cleanup complete — cleaned=%d', cleaned);
     res.json({ cleaned });
   } catch (err) {
     logger.error('[Manifest] Cleanup error', { err });
@@ -169,6 +174,7 @@ router.get('/history', async (req: Request, res: Response) => {
       where: { riderId },
       orderBy: { date: 'desc' },
       select: {
+        id: true,
         manifestId: true,
         date: true,
         status: true,
@@ -265,16 +271,16 @@ router.post('/create', async (req: Request, res: Response) => {
       return;
     }
 
-    const today = new Date();
-    today.setHours(8, 0, 0, 0);
-    const businessManifestId = `DDR-${today.toISOString().slice(0, 10).replace(/-/g, '')}-${uuidv4().slice(0, 4)}`;
+    const now = new Date();
+    const todayUTC = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
+    const businessManifestId = `DDR-${todayUTC.toISOString().slice(0, 10).replace(/-/g, '')}-${uuidv4().slice(0, 4)}`;
 
     const populatedManifest = await prisma.$transaction(async (tx) => {
       const manifest = await tx.manifest.create({
         data: {
           manifestId: businessManifestId,
           riderId,
-          date: today,
+          date: todayUTC,
           status: ManifestStatus.in_progress,
           totalStops: orders.length,
           completedStops: 0,
@@ -282,37 +288,33 @@ router.post('/create', async (req: Request, res: Response) => {
         },
       });
 
-      for (let i = 0; i < orders.length; i++) {
-        const order = orders[i];
+      const stopData = orders.map((order, i) => ({
+        stopId: generateStopId(),
+        manifestId: manifest.id,
+        orderId: order.id,
+        sequence: i + 1,
+        status: i === 0 ? StopStatus.in_progress : StopStatus.pending,
+        distance: 0,
+        eta: '',
+        attemptCount: 0,
+        maxAttempts: 3,
+      }));
 
-        await tx.stop.create({
-          data: {
-            stopId: generateStopId(),
-            manifestId: manifest.id,
-            orderId: order.id,
-            sequence: i + 1,
-            status: i === 0 ? StopStatus.in_progress : StopStatus.pending,
-            distance: 0,
-            eta: '',
-            attemptCount: 0,
-            maxAttempts: 3,
-          },
-        });
+      await tx.stop.createMany({ data: stopData });
 
-        await tx.order.update({
-          where: { id: order.id },
-          data: {
-            status: OrderStatus.assigned,
-            assignedManifestId: manifest.id,
-          },
-        });
-      }
+      await tx.order.updateMany({
+        where: { id: { in: orders.map((o) => o.id) } },
+        data: {
+          status: OrderStatus.assigned,
+          assignedManifestId: manifest.id,
+        },
+      });
 
       return tx.manifest.findUniqueOrThrow({
         where: { id: manifest.id },
         include: manifestWithStopsInclude,
       });
-    });
+    }, { timeout: 15000 });
 
     logger.info('[Manifest] Created manifest', { manifestId: businessManifestId, riderId, stopCount: orders.length });
     res.status(201).json(populatedManifest);
@@ -539,15 +541,14 @@ router.get('/', async (req: Request, res: Response) => {
       return;
     }
 
-    const todayMidnight = new Date();
-    todayMidnight.setHours(0, 0, 0, 0);
-    const tomorrowMidnight = new Date(todayMidnight);
-    tomorrowMidnight.setDate(tomorrowMidnight.getDate() + 1);
+    const now = new Date();
+    const todayUTC = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
+    const tomorrowUTC = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate() + 1));
 
     const manifest = await prisma.manifest.findFirst({
       where: {
         riderId,
-        createdAt: { gte: todayMidnight, lt: tomorrowMidnight },
+        date: { gte: todayUTC, lt: tomorrowUTC },
         status: { in: [ManifestStatus.pending, ManifestStatus.in_progress] },
       },
       include: manifestWithStopsInclude,
