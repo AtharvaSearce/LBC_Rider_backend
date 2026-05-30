@@ -365,46 +365,40 @@ router.post('/reorder', async (req: Request, res: Response) => {
 
     const terminalCount = await countTerminalStops(manifest.id);
 
-    await prisma.stop.updateMany({
+    const reorderableStops = await prisma.stop.findMany({
       where: {
         manifestId: manifest.id,
-        status: StopStatus.in_progress,
+        status: { notIn: TERMINAL_STATUSES },
       },
-      data: { status: StopStatus.pending },
+      select: { id: true, stopId: true },
     });
 
-    let firstNonTerminalId: string | null = null;
-    for (const id of stopOrder as string[]) {
-      const s = await prisma.stop.findFirst({
-        where: {
-          stopId: id,
-          manifestId: manifest.id,
-          status: { notIn: TERMINAL_STATUSES },
-        },
-      });
-      if (s) {
-        firstNonTerminalId = id;
-        break;
-      }
-    }
+    const stopIdToDbId = new Map(reorderableStops.map((s) => [s.stopId, s.id]));
 
-    for (let i = 0; i < stopOrder.length; i++) {
-      const stopId = stopOrder[i] as string;
-      const data: Prisma.StopUpdateManyMutationInput = {
-        sequence: terminalCount + i + 1,
-      };
-      if (stopId === firstNonTerminalId) {
-        data.status = StopStatus.in_progress;
+    await prisma.$transaction(async (tx) => {
+      for (const stop of reorderableStops) {
+        await tx.stop.update({
+          where: { id: stop.id },
+          data: { sequence: 10000 + Math.random() * 89999, status: StopStatus.pending },
+        });
       }
 
-      await prisma.stop.updateMany({
-        where: {
-          stopId,
-          status: { notIn: TERMINAL_STATUSES },
-        },
-        data,
-      });
-    }
+      let firstAssigned = false;
+      for (let i = 0; i < stopOrder.length; i++) {
+        const dbId = stopIdToDbId.get(stopOrder[i] as string);
+        if (!dbId) continue;
+
+        const data: Prisma.StopUpdateInput = {
+          sequence: terminalCount + i + 1,
+        };
+        if (!firstAssigned) {
+          data.status = StopStatus.in_progress;
+          firstAssigned = true;
+        }
+
+        await tx.stop.update({ where: { id: dbId }, data });
+      }
+    }, { timeout: 15000 });
 
     logger.info('[Route] Reordered', { manifestId: manifestParam, stopCount: stopOrder.length });
     res.json({
