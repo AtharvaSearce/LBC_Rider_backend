@@ -5,10 +5,13 @@ import {
   ManifestStatus,
   OrderStatus,
   Prisma,
+  PrismaClient,
   StopStatus,
 } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import logger from '../utils/logger';
+
+type TxClient = Omit<PrismaClient, '$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'>;
 
 const router = Router();
 
@@ -53,8 +56,8 @@ async function findStopByBusinessId(businessStopId: string) {
   });
 }
 
-async function promoteNextPendingStop(manifestId: string, excludeStopId?: string) {
-  const nextStop = await prisma.stop.findFirst({
+async function promoteNextPendingStop(db: TxClient, manifestId: string, excludeStopId?: string) {
+  const nextStop = await db.stop.findFirst({
     where: {
       manifestId,
       status: { in: [StopStatus.pending, StopStatus.in_progress] },
@@ -65,7 +68,7 @@ async function promoteNextPendingStop(manifestId: string, excludeStopId?: string
   });
 
   if (nextStop && nextStop.status === StopStatus.pending) {
-    return prisma.stop.update({
+    return db.stop.update({
       where: { id: nextStop.id },
       data: { status: StopStatus.in_progress },
       include: stopDetailInclude,
@@ -225,7 +228,7 @@ router.post('/:stopId/complete', async (req: Request, res: Response) => {
 
       const allStops = await tx.stop.findMany({
         where: { manifestId: stop.manifestId },
-        select: { status: true },
+        select: { status: true, orderId: true },
       });
       const allDone = allStops.every((s) =>
         DONE_STOP_STATUSES.includes(s.status)
@@ -235,6 +238,26 @@ router.post('/:stopId/complete', async (req: Request, res: Response) => {
           where: { id: stop.manifestId },
           data: { status: ManifestStatus.completed },
         });
+
+        // Release rts/reschedule orders back to available (same as cleanup)
+        const releaseOrderIds = allStops
+          .filter((s) =>
+            s.status === StopStatus.rts || s.status === StopStatus.reschedule
+          )
+          .map((s) => s.orderId);
+
+        if (releaseOrderIds.length > 0) {
+          await tx.order.updateMany({
+            where: {
+              id: { in: releaseOrderIds },
+              assignedManifestId: stop.manifestId,
+            },
+            data: {
+              status: OrderStatus.available,
+              assignedManifestId: null,
+            },
+          });
+        }
       }
 
       await tx.order.update({
@@ -242,19 +265,21 @@ router.post('/:stopId/complete', async (req: Request, res: Response) => {
         data: { status: OrderStatus.delivered, assignedManifestId: null },
       });
 
-      return tx.stop.findUniqueOrThrow({
+      const result = await tx.stop.findUniqueOrThrow({
         where: { id: stop.id },
         include: stopDetailInclude,
       });
-    });
 
-    const nextStop = await promoteNextPendingStop(stop.manifestId);
+      const nextStop = await promoteNextPendingStop(tx, stop.manifestId);
+
+      return { completedStop: result, nextStop };
+    }, { timeout: 15000 });
 
     logger.info('[Delivery] Stop completed', { stopId, riderId: req.rider?.riderId });
     res.json({
       message: 'Delivery completed successfully',
-      completedStop,
-      nextStop: nextStop || null,
+      completedStop: completedStop.completedStop,
+      nextStop: completedStop.nextStop || null,
     });
   } catch (err) {
     logger.error('[Delivery] Complete error', { err, stopId: req.params.stopId });
@@ -361,13 +386,15 @@ router.post('/:stopId/fail', async (req: Request, res: Response) => {
         });
       }
 
-      return tx.stop.findUniqueOrThrow({
+      const result = await tx.stop.findUniqueOrThrow({
         where: { id: stop.id },
         include: stopDetailInclude,
       });
-    });
 
-    const nextStop = await promoteNextPendingStop(stop.manifestId, stopId);
+      const nextStop = await promoteNextPendingStop(tx, stop.manifestId, stopId);
+
+      return { failedStop: result, nextStop };
+    }, { timeout: 15000 });
 
     const statusMessages: Record<string, string> = {
       rts: `Delivery failed (attempt ${newAttemptCount}/${stop.maxAttempts}). Item marked for return to hub.`,
@@ -384,8 +411,8 @@ router.post('/:stopId/fail', async (req: Request, res: Response) => {
 
     res.json({
       message: statusMessages[newStatus] || statusMessages.failed,
-      failedStop,
-      nextStop: nextStop || null,
+      failedStop: failedStop.failedStop,
+      nextStop: failedStop.nextStop || null,
     });
   } catch (err) {
     logger.error('[Delivery] Fail error', { err, stopId: req.params.stopId });
@@ -450,7 +477,7 @@ router.post('/:stopId/rts', async (req: Request, res: Response) => {
         where: { id: stop.id },
         include: stopDetailInclude,
       });
-    });
+    }, { timeout: 15000 });
 
     logger.info('[Delivery] Stop marked RTS', { stopId, riderId: req.rider?.riderId });
     res.json({ message: 'Stop marked as Return to Sender', stop: updatedStop });
