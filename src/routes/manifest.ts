@@ -192,6 +192,52 @@ router.get('/history', async (req: Request, res: Response) => {
   }
 });
 
+router.get('/available-orders', async (req: Request, res: Response) => {
+  try {
+    const riderId = req.rider?.riderId;
+    const hubId = req.rider?.hubId;
+    if (!riderId || !hubId) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+
+    const search = typeof req.query.search === 'string' ? req.query.search.trim() : '';
+
+    const where: {
+      hubId: string;
+      status: OrderStatus;
+      trackingNumber?: { contains: string; mode: 'insensitive' };
+    } = {
+      hubId,
+      status: OrderStatus.available,
+    };
+
+    if (search) {
+      where.trackingNumber = { contains: search, mode: 'insensitive' };
+    }
+
+    const [orders, total] = await Promise.all([
+      prisma.order.findMany({
+        where,
+        include: {
+          hub: { select: { name: true, zone: { select: { name: true } } } },
+        },
+        orderBy: { trackingNumber: 'asc' },
+        take: 50,
+      }),
+      prisma.order.count({ where }),
+    ]);
+
+    res.json({
+      orders: orders.map(formatOrderForScan),
+      total,
+    });
+  } catch (err) {
+    logger.error('[Manifest] Available orders error', { err });
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 router.get('/scan/:trackingNumber', async (req: Request, res: Response) => {
   try {
     const riderId = req.rider?.riderId;
@@ -225,6 +271,16 @@ router.get('/scan/:trackingNumber', async (req: Request, res: Response) => {
         error: `Order ${trackingNumber} is already ${order.status}`,
         status: order.status,
         assignedManifestId: order.assignedManifestId,
+      });
+      return;
+    }
+
+    // Validate order belongs to the rider's hub
+    const hubId = req.rider?.hubId;
+    if (hubId && order.hubId !== hubId) {
+      res.status(403).json({
+        error: `Order ${trackingNumber} belongs to a different hub`,
+        orderHub: order.hub.name,
       });
       return;
     }
@@ -269,6 +325,19 @@ router.post('/create', async (req: Request, res: Response) => {
         })),
       });
       return;
+    }
+
+    // Validate all orders belong to the rider's hub
+    const hubId = req.rider?.hubId;
+    if (hubId) {
+      const wrongHub = orders.filter((o) => o.hubId !== hubId);
+      if (wrongHub.length > 0) {
+        res.status(403).json({
+          error: 'Some orders belong to a different hub',
+          wrongHub: wrongHub.map((o) => o.trackingNumber),
+        });
+        return;
+      }
     }
 
     const now = new Date();
