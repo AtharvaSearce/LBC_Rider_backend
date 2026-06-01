@@ -250,7 +250,6 @@ router.post('/:stopId/complete', async (req: Request, res: Response) => {
           await tx.order.updateMany({
             where: {
               id: { in: releaseOrderIds },
-              assignedManifestId: stop.manifestId,
             },
             data: {
               status: OrderStatus.available,
@@ -376,14 +375,44 @@ router.post('/:stopId/fail', async (req: Request, res: Response) => {
           data: { status: OrderStatus.available, assignedManifestId: null },
         });
       } else if (newStatus === StopStatus.reschedule) {
-        // The parcel is coming back to the hub. Mark the order as returned
-        // but leave it attached to this manifest — the daily
-        // /manifest/cleanup job is responsible for releasing it back to the
-        // available pool for re-dispatch.
         await tx.order.update({
           where: { id: orderId },
           data: { status: OrderStatus.returned },
         });
+      }
+
+      // Check if all stops are now in a terminal state → mark manifest completed
+      const allStops = await tx.stop.findMany({
+        where: { manifestId: stop.manifestId },
+        select: { status: true, orderId: true },
+      });
+      const allDone = allStops.every((s) =>
+        DONE_STOP_STATUSES.includes(s.status)
+      );
+      if (allDone) {
+        await tx.manifest.update({
+          where: { id: stop.manifestId },
+          data: { status: ManifestStatus.completed },
+        });
+
+        // Release rts/reschedule orders back to available (same as cleanup)
+        const releaseOrderIds = allStops
+          .filter((s) =>
+            s.status === StopStatus.rts || s.status === StopStatus.reschedule
+          )
+          .map((s) => s.orderId);
+
+        if (releaseOrderIds.length > 0) {
+          await tx.order.updateMany({
+            where: {
+              id: { in: releaseOrderIds },
+            },
+            data: {
+              status: OrderStatus.available,
+              assignedManifestId: null,
+            },
+          });
+        }
       }
 
       const result = await tx.stop.findUniqueOrThrow({
