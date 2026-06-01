@@ -120,13 +120,22 @@ async function syncOrderFromStopStatus(orderId: string, stopStatus: StopStatus) 
     return;
   }
 
-  if (
-    stopStatus === StopStatus.failed ||
-    stopStatus === StopStatus.reschedule
-  ) {
+  if (stopStatus === StopStatus.failed) {
     await prisma.order.update({
       where: { id: orderId },
       data: { status: OrderStatus.available, assignedManifestId: null },
+    });
+    return;
+  }
+
+  if (stopStatus === StopStatus.reschedule) {
+    // The parcel is coming back to the hub. Mark the order as returned
+    // but leave it attached to its manifest — the daily /manifest/cleanup
+    // job is responsible for releasing it back to the available pool for
+    // re-dispatch.
+    await prisma.order.update({
+      where: { id: orderId },
+      data: { status: OrderStatus.returned },
     });
   }
 }

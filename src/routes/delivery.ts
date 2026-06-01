@@ -345,13 +345,19 @@ router.post('/:stopId/fail', async (req: Request, res: Response) => {
           where: { id: orderId },
           data: { status: OrderStatus.returned, assignedManifestId: null },
         });
-      } else if (
-        newStatus === StopStatus.failed ||
-        newStatus === StopStatus.reschedule
-      ) {
+      } else if (newStatus === StopStatus.failed) {
         await tx.order.update({
           where: { id: orderId },
           data: { status: OrderStatus.available, assignedManifestId: null },
+        });
+      } else if (newStatus === StopStatus.reschedule) {
+        // The parcel is coming back to the hub. Mark the order as returned
+        // but leave it attached to this manifest — the daily
+        // /manifest/cleanup job is responsible for releasing it back to the
+        // available pool for re-dispatch.
+        await tx.order.update({
+          where: { id: orderId },
+          data: { status: OrderStatus.returned },
         });
       }
 

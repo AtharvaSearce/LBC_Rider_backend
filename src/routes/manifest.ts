@@ -103,10 +103,12 @@ router.post('/cleanup', async (req: Request, res: Response) => {
 
     console.log('[Manifest] Cleanup — riderId=%s cutoff=%s', riderId, todayUTC.toISOString());
 
+    // Sweep every stale manifest regardless of status. Completed manifests
+    // can still be holding onto orders via rescheduled stops (since the
+    // reschedule action no longer detaches the order — it defers to here).
     const staleManifests = await prisma.manifest.findMany({
       where: {
         riderId,
-        status: { in: [ManifestStatus.pending, ManifestStatus.in_progress] },
         date: { lt: todayUTC },
       },
     });
@@ -120,20 +122,32 @@ router.post('/cleanup', async (req: Request, res: Response) => {
       });
 
       for (const stop of stops) {
-        if (stop.status !== StopStatus.completed) {
+        // Already terminal in their final state — leave them alone.
+        if (stop.status === StopStatus.completed) continue;
+        if (stop.status === StopStatus.rts) continue;
+
+        if (stop.status !== StopStatus.reschedule) {
           await prisma.stop.update({
             where: { id: stop.id },
             data: { status: StopStatus.reschedule },
           });
-
-          await prisma.order.update({
-            where: { id: stop.orderId },
-            data: {
-              status: OrderStatus.available,
-              assignedManifestId: null,
-            },
-          });
         }
+
+        // Only release the order if it is still attached to *this* manifest.
+        // If it has already been re-assigned to a newer manifest, leave it.
+        // For rescheduled stops the order is currently `returned` with its
+        // assignedManifestId still pointing here; this flips it back to
+        // `available` and detaches it.
+        await prisma.order.updateMany({
+          where: {
+            id: stop.orderId,
+            assignedManifestId: manifest.id,
+          },
+          data: {
+            status: OrderStatus.available,
+            assignedManifestId: null,
+          },
+        });
       }
 
       const updatedStops = await prisma.stop.findMany({
