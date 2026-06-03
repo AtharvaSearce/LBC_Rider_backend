@@ -6,6 +6,7 @@ export interface RiderTokenPayload {
   riderId: string;
   employeeId: string;
   hubId: string;
+  pinVersion: number;
   role: 'rider';
   iat?: number;
   exp?: number;
@@ -35,6 +36,7 @@ export function signRiderToken(payload: {
   riderId: string;
   employeeId: string;
   hubId: string;
+  pinVersion: number;
 }): string {
   const secret = getJwtSecret();
   if (!secret) {
@@ -46,6 +48,7 @@ export function signRiderToken(payload: {
       riderId: payload.riderId,
       employeeId: payload.employeeId,
       hubId: payload.hubId,
+      pinVersion: payload.pinVersion,
       role: 'rider',
     },
     secret,
@@ -91,6 +94,7 @@ export function authMiddleware(
       riderId: decoded.riderId,
       employeeId: decoded.employeeId,
       hubId: decoded.hubId,
+      pinVersion: decoded.pinVersion,
       role: decoded.role,
       iat: decoded.iat,
       exp: decoded.exp,

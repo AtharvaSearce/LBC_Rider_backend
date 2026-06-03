@@ -71,6 +71,8 @@ model Rider {
   email        String     @unique
   phone        String
   passwordHash String
+  pinHash      String?
+  pinVersion   Int        @default(0)
   hubId        String
   hub          Hub        @relation(fields: [hubId], references: [id], onDelete: Restrict)
   vehicleType  String     @default("motorcycle")
