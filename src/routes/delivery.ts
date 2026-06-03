@@ -183,8 +183,15 @@ router.post('/:stopId/complete', async (req: Request, res: Response) => {
 
     const orderId = stop.orderId;
 
-    if (stop.status === StopStatus.completed) {
-      res.status(400).json({ error: 'Stop already completed' });
+    // Idempotency guard — if stop already terminal, return existing result
+    if (DONE_STOP_STATUSES.includes(stop.status)) {
+      logger.info('[Delivery] Idempotent replay — stop already done', { stopId, status: stop.status });
+      res.json({
+        message: 'Delivery already processed',
+        completedStop: stop,
+        nextStop: null,
+        _replayed: true,
+      });
       return;
     }
 
@@ -309,6 +316,18 @@ router.post('/:stopId/fail', async (req: Request, res: Response) => {
 
     if (!stop.orderId) {
       res.status(500).json({ error: 'Stop has no linked order' });
+      return;
+    }
+
+    // Idempotency guard — if stop already terminal, return existing result
+    if (DONE_STOP_STATUSES.includes(stop.status)) {
+      logger.info('[Delivery] Idempotent replay — stop already done', { stopId, status: stop.status });
+      res.json({
+        message: 'Delivery already processed',
+        failedStop: stop,
+        nextStop: null,
+        _replayed: true,
+      });
       return;
     }
 
@@ -470,6 +489,17 @@ router.post('/:stopId/rts', async (req: Request, res: Response) => {
       return;
     }
 
+    // Idempotency guard — if stop already terminal, return existing result
+    if (DONE_STOP_STATUSES.includes(stop.status)) {
+      logger.info('[Delivery] Idempotent replay — stop already done', { stopId, status: stop.status });
+      res.json({
+        message: 'RTS already processed',
+        stop,
+        _replayed: true,
+      });
+      return;
+    }
+
     const orderId = stop.orderId;
 
     const updatedStop = await prisma.$transaction(async (tx) => {
@@ -512,6 +542,192 @@ router.post('/:stopId/rts', async (req: Request, res: Response) => {
     res.json({ message: 'Stop marked as Return to Sender', stop: updatedStop });
   } catch (err) {
     logger.error('[Delivery] RTS error', { err, stopId: req.params.stopId });
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ─── Batch Sync (offline queue replay) ──────────────────────────────
+
+router.post('/batch-sync', async (req: Request, res: Response) => {
+  try {
+    const riderId = req.rider?.riderId;
+    if (!riderId) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+
+    const { actions } = req.body;
+    if (!Array.isArray(actions) || actions.length === 0) {
+      res.status(400).json({ error: 'actions array is required' });
+      return;
+    }
+
+    logger.info('[Delivery] Batch sync started', { riderId, count: actions.length });
+
+    const results: { clientId: string; status: string; stopId: string; reason?: string; error?: string }[] = [];
+
+    for (const action of actions) {
+      const { clientId, stopId, type, data } = action;
+      try {
+        const stop = await findStopByBusinessId(stopId);
+        if (!stop) {
+          results.push({ clientId, status: 'error', stopId, error: 'Stop not found' });
+          continue;
+        }
+
+        // If stop is already in a terminal state, skip (idempotent)
+        if (DONE_STOP_STATUSES.includes(stop.status)) {
+          results.push({ clientId, status: 'skipped', stopId, reason: 'already_processed' });
+          continue;
+        }
+
+        if (!stop.orderId) {
+          results.push({ clientId, status: 'error', stopId, error: 'No linked order' });
+          continue;
+        }
+
+        const orderId = stop.orderId;
+        const deliveryTimestamp = data?.timestamp ? new Date(data.timestamp) : new Date();
+
+        if (type === 'complete') {
+          await prisma.$transaction(async (tx) => {
+            await tx.stop.update({
+              where: { id: stop.id },
+              data: { status: StopStatus.completed, attemptCount: { increment: 1 } },
+            });
+            await tx.deliveryResult.upsert({
+              where: { stopId: stop.id },
+              create: {
+                stopId: stop.id,
+                outcome: DeliveryOutcome.delivered,
+                timestamp: deliveryTimestamp,
+                signatureUri: optionalString(data?.signatureBase64),
+                photoUri: optionalString(data?.photoBase64),
+                codCollected: data?.codCollected ?? 0,
+              },
+              update: {
+                outcome: DeliveryOutcome.delivered,
+                timestamp: deliveryTimestamp,
+                signatureUri: optionalString(data?.signatureBase64),
+                photoUri: optionalString(data?.photoBase64),
+                codCollected: data?.codCollected ?? 0,
+              },
+            });
+            await tx.order.update({
+              where: { id: orderId },
+              data: { status: OrderStatus.delivered, assignedManifestId: null },
+            });
+            await promoteNextPendingStop(tx, stop.manifestId);
+          }, { timeout: 15000 });
+
+        } else if (type === 'fail') {
+          const newAttemptCount = stop.attemptCount + 1;
+          let newStatus: StopStatus;
+          const nextAction = data?.nextAction;
+          if (nextAction === 'reschedule') {
+            newStatus = StopStatus.reschedule;
+          } else if (newAttemptCount >= stop.maxAttempts || nextAction === 'rts') {
+            newStatus = StopStatus.rts;
+          } else {
+            newStatus = StopStatus.failed;
+          }
+
+          await prisma.$transaction(async (tx) => {
+            await tx.stop.update({
+              where: { id: stop.id },
+              data: { status: newStatus, attemptCount: { increment: 1 } },
+            });
+            await tx.deliveryResult.upsert({
+              where: { stopId: stop.id },
+              create: {
+                stopId: stop.id,
+                outcome: DeliveryOutcome.failed,
+                timestamp: deliveryTimestamp,
+                failureReason: data?.reason || 'Unknown',
+                failureNotes: data?.notes || '',
+                photoUri: optionalString(data?.photoBase64),
+                nextAction: parseNextAction(nextAction),
+              },
+              update: {
+                outcome: DeliveryOutcome.failed,
+                timestamp: deliveryTimestamp,
+                failureReason: data?.reason || 'Unknown',
+                failureNotes: data?.notes || '',
+                photoUri: optionalString(data?.photoBase64),
+                nextAction: parseNextAction(nextAction),
+              },
+            });
+
+            if (newStatus === StopStatus.rts) {
+              await tx.order.update({
+                where: { id: orderId },
+                data: { status: OrderStatus.returned, assignedManifestId: null },
+              });
+            } else if (newStatus === StopStatus.reschedule) {
+              await tx.order.update({
+                where: { id: orderId },
+                data: { status: OrderStatus.available, assignedManifestId: null },
+              });
+            }
+
+            if (DONE_STOP_STATUSES.includes(newStatus)) {
+              await promoteNextPendingStop(tx, stop.manifestId);
+            }
+          }, { timeout: 15000 });
+
+        } else if (type === 'rts') {
+          await prisma.$transaction(async (tx) => {
+            await tx.stop.update({
+              where: { id: stop.id },
+              data: { status: StopStatus.rts },
+            });
+            await tx.deliveryResult.upsert({
+              where: { stopId: stop.id },
+              create: {
+                stopId: stop.id,
+                outcome: DeliveryOutcome.failed,
+                timestamp: new Date(),
+                failureReason: data?.reason || 'Returned to sender',
+                failureNotes: data?.notes || '',
+                nextAction: DeliveryNextAction.rts,
+              },
+              update: {
+                outcome: DeliveryOutcome.failed,
+                timestamp: new Date(),
+                failureReason: data?.reason || 'Returned to sender',
+                failureNotes: data?.notes || '',
+                nextAction: DeliveryNextAction.rts,
+              },
+            });
+            await tx.order.update({
+              where: { id: orderId },
+              data: { status: OrderStatus.returned, assignedManifestId: null },
+            });
+          }, { timeout: 15000 });
+
+        } else {
+          results.push({ clientId, status: 'error', stopId, error: `Unknown type: ${type}` });
+          continue;
+        }
+
+        results.push({ clientId, status: 'ok', stopId });
+      } catch (actionErr: any) {
+        logger.error('[Delivery] Batch sync action failed', { clientId, stopId, err: actionErr });
+        results.push({ clientId, status: 'error', stopId, error: actionErr.message || 'Unknown error' });
+      }
+    }
+
+    logger.info('[Delivery] Batch sync completed', {
+      riderId,
+      total: actions.length,
+      ok: results.filter(r => r.status === 'ok').length,
+      skipped: results.filter(r => r.status === 'skipped').length,
+      errors: results.filter(r => r.status === 'error').length,
+    });
+
+    res.json({ results });
+  } catch (err) {
+    logger.error('[Delivery] Batch sync error', { err });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
