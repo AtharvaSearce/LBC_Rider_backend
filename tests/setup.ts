@@ -1,0 +1,9 @@
+process.env.NODE_ENV = 'test';
+process.env.JWT_SECRET = process.env.JWT_SECRET ?? 'test-secret-do-not-use-in-prod';
+process.env.ADMIN_EMAIL = process.env.ADMIN_EMAIL ?? 'admin@lbc.ph';
+process.env.ADMIN_PASSWORD = process.env.ADMIN_PASSWORD ?? 'admin123';
+process.env.ADMIN_ID = process.env.ADMIN_ID ?? 'ADM-001';
+process.env.ADMIN_NAME = process.env.ADMIN_NAME ?? 'LBC Admin';
+process.env.GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY ?? 'test-maps-key';
+process.env.GCP_PROJECT_ID = process.env.GCP_PROJECT_ID ?? 'test-gcp-project';
+process.env.GEMINI_API_KEY = process.env.GEMINI_API_KEY ?? 'test-gemini-key';
