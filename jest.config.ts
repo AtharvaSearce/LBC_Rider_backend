@@ -11,6 +11,7 @@ const config: Config = {
   resetMocks: false,
   restoreMocks: true,
   moduleFileExtensions: ['ts', 'js', 'json'],
+  collectCoverage: true,
   collectCoverageFrom: [
     'src/**/*.ts',
     '!src/server.ts',
