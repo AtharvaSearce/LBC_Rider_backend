@@ -6,6 +6,7 @@ const config: Config = {
   rootDir: '.',
   testMatch: ['<rootDir>/tests/**/*.test.ts'],
   setupFiles: ['<rootDir>/tests/setup.ts'],
+  setupFilesAfterEnv: ['<rootDir>/tests/jestSetup.ts'],
   clearMocks: true,
   resetMocks: false,
   restoreMocks: true,
