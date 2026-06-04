@@ -19,6 +19,7 @@ interface DecodedRiderToken extends RiderTokenPayload {
 
 const PUBLIC_PATHS = [
   '/health',
+  '/api/docs',
   '/api/auth/login',
   '/api/admin/auth',
   '/api/geocode',

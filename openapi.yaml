@@ -1,0 +1,1915 @@
+openapi: 3.0.3
+info:
+  title: LBC Rider Backend API
+  description: |
+    REST API for the LBC Express rider delivery platform and admin portal.
+
+    ## Authentication
+
+    | Audience | Login | Header |
+    |----------|-------|--------|
+    | **Rider** | `POST /api/auth/login` | `Authorization: Bearer <rider_jwt>` |
+    | **Admin** | `POST /api/admin/auth/login` | `Authorization: Bearer <admin_jwt>` |
+
+    ## Using Swagger UI
+
+    1. Click the green **Authorize** button (top right).
+    2. You will see two token fields:
+       - **RiderAccessToken** — for rider APIs (manifest, delivery, route, etc.)
+       - **AdminAccessToken** — for `/api/admin/*` APIs
+    3. Paste the full header value: `Bearer <your_jwt_token>`
+    4. Authorize only one at a time (both use the `Authorization` header).
+
+    Public routes (no rider JWT): `/health`, `/api/auth/login`, `/api/admin/auth/*`, `/api/geocode/*`, `/api/docs`
+
+    Admin routes additionally require an admin JWT via `adminMiddleware`.
+
+    ## Base URL
+
+    Default local port: `8000` (override with `PORT` env var).
+  version: 1.0.0
+  contact:
+    name: LBC Rider Backend
+
+servers:
+  - url: http://localhost:8000
+    description: Local development
+  - url: http://localhost:3002
+    description: Local (.env.example default)
+
+tags:
+  - name: Health
+  - name: Rider Auth
+  - name: Admin Auth
+  - name: Attendance
+  - name: Manifest
+  - name: Delivery
+  - name: Route
+  - name: Geocode
+  - name: AI
+  - name: Admin Zones
+  - name: Admin Hubs
+  - name: Admin Riders
+  - name: Admin Orders
+  - name: Admin Stops
+  - name: Admin Manifests
+  - name: Admin Dashboard
+
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Health check
+      security: []
+      responses:
+        '200':
+          description: Server is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  timestamp:
+                    type: string
+                    format: date-time
+
+  # ─── Rider Auth ───────────────────────────────────────────────────────
+  /api/auth/login:
+    post:
+      tags: [Rider Auth]
+      summary: Rider login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                  format: password
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RiderLoginResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Account deactivated
+
+  /api/auth/pin/setup:
+    post:
+      tags: [Rider Auth]
+      summary: Set up 4-digit PIN
+      security:
+        - RiderAccessToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pin]
+              properties:
+                pin:
+                  type: string
+                  pattern: '^\d{4}$'
+                  example: '1234'
+      responses:
+        '200':
+          description: PIN set
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/auth/pin/verify:
+    post:
+      tags: [Rider Auth]
+      summary: Verify PIN (online fallback)
+      security:
+        - RiderAccessToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pin]
+              properties:
+                pin:
+                  type: string
+      responses:
+        '200':
+          description: PIN valid
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/auth/refresh:
+    post:
+      tags: [Rider Auth]
+      summary: Refresh rider JWT
+      security:
+        - RiderAccessToken: []
+      responses:
+        '200':
+          description: New token issued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+
+  # ─── Admin Auth ───────────────────────────────────────────────────────
+  /api/admin/auth/login:
+    post:
+      tags: [Admin Auth]
+      summary: Admin login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                password:
+                  type: string
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminLoginResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ─── Attendance ───────────────────────────────────────────────────────
+  /api/attendance/checkin:
+    post:
+      tags: [Attendance]
+      summary: Hub geofence check-in
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [lat, lng]
+              properties:
+                lat:
+                  type: number
+                lng:
+                  type: number
+      responses:
+        '200':
+          description: Check-in successful
+        '403':
+          description: Outside hub geofence
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ─── Manifest (Rider) ─────────────────────────────────────────────────
+  /api/manifest:
+    get:
+      tags: [Manifest]
+      summary: Get today's active manifest
+      responses:
+        '200':
+          description: Active manifest with stops
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManifestWithStops'
+        '404':
+          description: No active manifest for today
+
+  /api/manifest/cleanup:
+    post:
+      tags: [Manifest]
+      summary: Close stale manifests and release orders
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  cleaned:
+                    type: integer
+
+  /api/manifest/history:
+    get:
+      tags: [Manifest]
+      summary: Rider manifest history
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  manifests:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ManifestSummary'
+
+  /api/manifest/available-orders:
+    get:
+      tags: [Manifest]
+      summary: List available orders at rider's hub
+      parameters:
+        - name: search
+          in: query
+          schema:
+            type: string
+          description: Filter by tracking number
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  orders:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/OrderScanResult'
+                  total:
+                    type: integer
+
+  /api/manifest/scan/{trackingNumber}:
+    get:
+      tags: [Manifest]
+      summary: Scan lookup order by tracking number
+      parameters:
+        - $ref: '#/components/parameters/trackingNumber'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderScanResult'
+        '404':
+          description: Order not found
+        '409':
+          description: Order not available
+
+  /api/manifest/create:
+    post:
+      tags: [Manifest]
+      summary: Create manifest from scanned orders
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [orderIds]
+              properties:
+                orderIds:
+                  type: array
+                  items:
+                    type: string
+                  minItems: 1
+      responses:
+        '201':
+          description: Manifest created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManifestWithStops'
+
+  /api/manifest/sync:
+    post:
+      tags: [Manifest]
+      summary: Geocode ungeocoded order addresses
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  geocodedCount:
+                    type: integer
+                  totalUngeocoded:
+                    type: integer
+
+  /api/manifest/stop/{stopId}:
+    get:
+      tags: [Manifest]
+      summary: Get single stop
+      parameters:
+        - $ref: '#/components/parameters/businessStopId'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StopDetail'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Manifest]
+      summary: Remove stop from manifest
+      parameters:
+        - $ref: '#/components/parameters/businessStopId'
+      responses:
+        '200':
+          description: Updated manifest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManifestWithStops'
+        '403':
+          description: Not rider's manifest
+        '409':
+          description: Cannot remove completed stop
+
+  # ─── Delivery ─────────────────────────────────────────────────────────
+  /api/delivery/history:
+    get:
+      tags: [Delivery]
+      summary: Delivery history for rider
+      parameters:
+        - name: date
+          in: query
+          schema:
+            type: string
+            enum: [today, yesterday]
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/StopStatus'
+        - name: search
+          in: query
+          schema:
+            type: string
+          description: Search tracking number or recipient
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deliveries:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/StopDetail'
+                  summary:
+                    type: object
+                    properties:
+                      total:
+                        type: integer
+                      delivered:
+                        type: integer
+                      failed:
+                        type: integer
+                      returned:
+                        type: integer
+
+  /api/delivery/{stopId}/complete:
+    post:
+      tags: [Delivery]
+      summary: Complete delivery
+      parameters:
+        - $ref: '#/components/parameters/businessStopId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompleteDeliveryRequest'
+      responses:
+        '200':
+          description: Delivery completed
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/delivery/{stopId}/fail:
+    post:
+      tags: [Delivery]
+      summary: Mark delivery failed
+      parameters:
+        - $ref: '#/components/parameters/businessStopId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FailDeliveryRequest'
+      responses:
+        '200':
+          description: Failure recorded
+
+  /api/delivery/{stopId}/rts:
+    post:
+      tags: [Delivery]
+      summary: Return to sender
+      parameters:
+        - $ref: '#/components/parameters/businessStopId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                notes:
+                  type: string
+      responses:
+        '200':
+          description: Stop marked RTS
+
+  /api/delivery/batch-sync:
+    post:
+      tags: [Delivery]
+      summary: Replay offline delivery actions
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [actions]
+              properties:
+                actions:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/BatchSyncAction'
+      responses:
+        '200':
+          description: Batch results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        clientId:
+                          type: string
+                        status:
+                          type: string
+                          enum: [success, skipped, error]
+                        stopId:
+                          type: string
+                        reason:
+                          type: string
+                        error:
+                          type: string
+
+  # ─── Route ────────────────────────────────────────────────────────────
+  /api/route/optimize:
+    post:
+      tags: [Route]
+      summary: Optimize stop sequence (Fleet Routing or local fallback)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [manifestId]
+              properties:
+                manifestId:
+                  type: string
+                priorityStopId:
+                  type: string
+                  example: stop-a1b2c3d4
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  newOrder:
+                    type: array
+                    items:
+                      type: string
+                  message:
+                    type: string
+
+  /api/route/compute:
+    post:
+      tags: [Route]
+      summary: Compute route between two points
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LatLngPair'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RouteComputeResult'
+
+  /api/route/directions:
+    post:
+      tags: [Route]
+      summary: Directions with optional waypoints
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [origin, destination]
+              properties:
+                origin:
+                  $ref: '#/components/schemas/LatLng'
+                destination:
+                  $ref: '#/components/schemas/LatLng'
+                waypoints:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/LatLng'
+      responses:
+        '200':
+          description: Google Routes API response
+
+  /api/route/reorder:
+    post:
+      tags: [Route]
+      summary: Manually reorder stops on manifest
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [manifestId, stopOrder]
+              properties:
+                manifestId:
+                  type: string
+                stopOrder:
+                  type: array
+                  items:
+                    type: string
+                  description: Business stop IDs in desired order
+      responses:
+        '200':
+          description: Order updated
+
+  # ─── Geocode ──────────────────────────────────────────────────────────
+  /api/geocode/address:
+    post:
+      tags: [Geocode]
+      summary: Forward geocode address
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address]
+              properties:
+                address:
+                  type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  lat:
+                    type: number
+                  lng:
+                    type: number
+                  formattedAddress:
+                    type: string
+                  placeId:
+                    type: string
+
+  /api/geocode/reverse:
+    post:
+      tags: [Geocode]
+      summary: Reverse geocode coordinates
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [lat, lng]
+              properties:
+                lat:
+                  type: number
+                lng:
+                  type: number
+      responses:
+        '200':
+          description: Address resolved
+
+  /api/geocode/places-autocomplete:
+    get:
+      tags: [Geocode]
+      summary: Address autocomplete (Philippines)
+      security: []
+      parameters:
+        - name: query
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  suggestions:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        placeId:
+                          type: string
+                        description:
+                          type: string
+                        mainText:
+                          type: string
+                        secondaryText:
+                          type: string
+
+  # ─── AI ───────────────────────────────────────────────────────────────
+  /api/ai/command:
+    post:
+      tags: [AI]
+      summary: Natural-language rider command (Gemini)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text:
+                  type: string
+                  example: How many deliveries left?
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  intent:
+                    type: string
+                    enum:
+                      - optimize_route
+                      - filter_deliveries
+                      - query_status
+                      - CONVERSATIONAL
+                  message:
+                    type: string
+                  action:
+                    nullable: true
+                  data:
+                    nullable: true
+
+  # ─── Admin Zones ──────────────────────────────────────────────────────
+  /api/admin/zones:
+    get:
+      tags: [Admin Zones]
+      summary: List zones
+      security:
+        - AdminAccessToken: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  zones:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Zone'
+                  total:
+                    type: integer
+    post:
+      tags: [Admin Zones]
+      summary: Create zone
+      security:
+        - AdminAccessToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+      responses:
+        '201':
+          description: Zone created
+
+  /api/admin/zones/{id}:
+    put:
+      tags: [Admin Zones]
+      summary: Update zone
+      security:
+        - AdminAccessToken: []
+      parameters:
+        - $ref: '#/components/parameters/resourceId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+      responses:
+        '200':
+          description: Zone updated
+    delete:
+      tags: [Admin Zones]
+      summary: Delete zone
+      security:
+        - AdminAccessToken: []
+      parameters:
+        - $ref: '#/components/parameters/resourceId'
+      responses:
+        '200':
+          description: Zone deleted
+
+  # ─── Admin Hubs ───────────────────────────────────────────────────────
+  /api/admin/hubs:
+    get:
+      tags: [Admin Hubs]
+      summary: List hubs
+      security:
+        - AdminAccessToken: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  hubs:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Hub'
+                  total:
+                    type: integer
+    post:
+      tags: [Admin Hubs]
+      summary: Create hub
+      security:
+        - AdminAccessToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, lat, lng, zoneId]
+              properties:
+                name:
+                  type: string
+                lat:
+                  type: number
+                lng:
+                  type: number
+                radiusMeters:
+                  type: integer
+                  default: 200
+                zoneId:
+                  type: string
+      responses:
+        '201':
+          description: Hub created
+
+  /api/admin/hubs/{id}:
+    put:
+      tags: [Admin Hubs]
+      summary: Update hub
+      security:
+        - AdminAccessToken: []
+      parameters:
+        - $ref: '#/components/parameters/resourceId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                lat:
+                  type: number
+                lng:
+                  type: number
+                radiusMeters:
+                  type: integer
+                zoneId:
+                  type: string
+      responses:
+        '200':
+          description: Hub updated
+    delete:
+      tags: [Admin Hubs]
+      summary: Delete hub
+      security:
+        - AdminAccessToken: []
+      parameters:
+        - $ref: '#/components/parameters/resourceId'
+      responses:
+        '200':
+          description: Hub deleted
+
+  # ─── Admin Riders ─────────────────────────────────────────────────────
+  /api/admin/riders:
+    get:
+      tags: [Admin Riders]
+      summary: List riders
+      security:
+        - AdminAccessToken: []
+      parameters:
+        - name: search
+          in: query
+          schema:
+            type: string
+        - name: hubId
+          in: query
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [active, inactive]
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  riders:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Rider'
+                  total:
+                    type: integer
+    post:
+      tags: [Admin Riders]
+      summary: Create rider
+      security:
+        - AdminAccessToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRiderRequest'
+      responses:
+        '201':
+          description: Rider created
+
+  /api/admin/riders/{id}:
+    get:
+      tags: [Admin Riders]
+      summary: Get rider with recent manifests
+      security:
+        - AdminAccessToken: []
+      parameters:
+        - $ref: '#/components/parameters/resourceId'
+      responses:
+        '200':
+          description: Rider detail
+    put:
+      tags: [Admin Riders]
+      summary: Update rider
+      security:
+        - AdminAccessToken: []
+      parameters:
+        - $ref: '#/components/parameters/resourceId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateRiderRequest'
+      responses:
+        '200':
+          description: Rider updated
+    delete:
+      tags: [Admin Riders]
+      summary: Delete rider
+      security:
+        - AdminAccessToken: []
+      parameters:
+        - $ref: '#/components/parameters/resourceId'
+      responses:
+        '200':
+          description: Rider deleted
+
+  # ─── Admin Orders ─────────────────────────────────────────────────────
+  /api/admin/orders:
+    get:
+      tags: [Admin Orders]
+      summary: List orders
+      security:
+        - AdminAccessToken: []
+      parameters:
+        - name: hub
+          in: query
+          schema:
+            type: string
+        - name: zone
+          in: query
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/OrderStatus'
+        - name: search
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  orders:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Order'
+                  total:
+                    type: integer
+    post:
+      tags: [Admin Orders]
+      summary: Create order
+      security:
+        - AdminAccessToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOrderRequest'
+      responses:
+        '201':
+          description: Order created
+
+  /api/admin/orders/bulk:
+    post:
+      tags: [Admin Orders]
+      summary: Bulk import orders
+      security:
+        - AdminAccessToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [orders]
+              properties:
+                orders:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/CreateOrderRequest'
+      responses:
+        '201':
+          description: Import summary
+
+  /api/admin/orders/{id}:
+    put:
+      tags: [Admin Orders]
+      summary: Update order
+      security:
+        - AdminAccessToken: []
+      parameters:
+        - $ref: '#/components/parameters/resourceId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOrderRequest'
+      responses:
+        '200':
+          description: Order updated
+    delete:
+      tags: [Admin Orders]
+      summary: Delete order
+      security:
+        - AdminAccessToken: []
+      parameters:
+        - $ref: '#/components/parameters/resourceId'
+      responses:
+        '200':
+          description: Order deleted
+
+  # ─── Admin Stops ──────────────────────────────────────────────────────
+  /api/admin/stops:
+    get:
+      tags: [Admin Stops]
+      summary: List stops
+      security:
+        - AdminAccessToken: []
+      parameters:
+        - name: manifestId
+          in: query
+          schema:
+            type: string
+          description: Manifest DB id or business manifestId
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/StopStatus'
+        - name: search
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  stops:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/StopDetail'
+                  total:
+                    type: integer
+    post:
+      tags: [Admin Stops]
+      summary: Add order to manifest (create stop)
+      security:
+        - AdminAccessToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [manifestId]
+              properties:
+                stopId:
+                  type: string
+                  description: Optional; auto-generated if omitted
+                manifestId:
+                  type: string
+                orderId:
+                  type: string
+                trackingNumber:
+                  type: string
+                sequence:
+                  type: integer
+              oneOf:
+                - required: [orderId]
+                - required: [trackingNumber]
+      responses:
+        '201':
+          description: Stop created
+
+  /api/admin/stops/{id}:
+    get:
+      tags: [Admin Stops]
+      summary: Get stop by DB id or business stopId
+      security:
+        - AdminAccessToken: []
+      parameters:
+        - $ref: '#/components/parameters/resourceId'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  stop:
+                    $ref: '#/components/schemas/StopDetail'
+    put:
+      tags: [Admin Stops]
+      summary: Update stop route fields
+      security:
+        - AdminAccessToken: []
+      parameters:
+        - $ref: '#/components/parameters/resourceId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                sequence:
+                  type: integer
+                status:
+                  $ref: '#/components/schemas/StopStatus'
+                distance:
+                  type: number
+                eta:
+                  type: string
+                attemptCount:
+                  type: integer
+      responses:
+        '200':
+          description: Stop updated
+    delete:
+      tags: [Admin Stops]
+      summary: Delete stop
+      security:
+        - AdminAccessToken: []
+      parameters:
+        - $ref: '#/components/parameters/resourceId'
+      responses:
+        '200':
+          description: Stop deleted
+
+  # ─── Admin Manifests ──────────────────────────────────────────────────
+  /api/admin/manifests:
+    get:
+      tags: [Admin Manifests]
+      summary: List manifests
+      security:
+        - AdminAccessToken: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/ManifestStatus'
+        - name: riderId
+          in: query
+          schema:
+            type: string
+        - name: date
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: search
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  manifests:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ManifestSummary'
+                  total:
+                    type: integer
+    post:
+      tags: [Admin Manifests]
+      summary: Create manifest
+      security:
+        - AdminAccessToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [manifestId, riderId, date]
+              properties:
+                manifestId:
+                  type: string
+                riderId:
+                  type: string
+                date:
+                  type: string
+                  format: date
+                totalStops:
+                  type: integer
+                  default: 0
+      responses:
+        '201':
+          description: Manifest created
+
+  /api/admin/manifests/{id}:
+    get:
+      tags: [Admin Manifests]
+      summary: Get manifest with stops
+      security:
+        - AdminAccessToken: []
+      parameters:
+        - $ref: '#/components/parameters/resourceId'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  manifest:
+                    $ref: '#/components/schemas/ManifestWithStops'
+    put:
+      tags: [Admin Manifests]
+      summary: Update manifest
+      security:
+        - AdminAccessToken: []
+      parameters:
+        - $ref: '#/components/parameters/resourceId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                riderId:
+                  type: string
+                status:
+                  $ref: '#/components/schemas/ManifestStatus'
+                date:
+                  type: string
+                  format: date
+                totalStops:
+                  type: integer
+                completedStops:
+                  type: integer
+                failedStops:
+                  type: integer
+      responses:
+        '200':
+          description: Manifest updated
+    delete:
+      tags: [Admin Manifests]
+      summary: Delete manifest
+      security:
+        - AdminAccessToken: []
+      parameters:
+        - $ref: '#/components/parameters/resourceId'
+      responses:
+        '200':
+          description: Manifest deleted
+
+  # ─── Admin Dashboard ──────────────────────────────────────────────────
+  /api/admin/dashboard:
+    get:
+      tags: [Admin Dashboard]
+      summary: Dashboard statistics
+      security:
+        - AdminAccessToken: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardStats'
+
+components:
+  securitySchemes:
+    RiderAccessToken:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: |
+        **Rider JWT** — enter the full value including the Bearer prefix.
+
+        Example: `Bearer eyJhbGciOiJIUzI1NiIs...`
+
+        Get your token from `POST /api/auth/login` → response field `token`.
+    AdminAccessToken:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: |
+        **Admin JWT** — enter the full value including the Bearer prefix.
+
+        Example: `Bearer eyJhbGciOiJIUzI1NiIs...`
+
+        Get your token from `POST /api/admin/auth/login` → response field `token`.
+
+        Note: Only authorize one token at a time (rider OR admin) since both use the same header.
+
+  parameters:
+    resourceId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    businessStopId:
+      name: stopId
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Business stop ID (e.g. stop-a1b2c3d4)
+    trackingNumber:
+      name: trackingNumber
+      in: path
+      required: true
+      schema:
+        type: string
+
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+
+    LatLng:
+      type: object
+      required: [lat, lng]
+      properties:
+        lat:
+          type: number
+        lng:
+          type: number
+
+    LatLngPair:
+      type: object
+      required: [origin, destination]
+      properties:
+        origin:
+          $ref: '#/components/schemas/LatLng'
+        destination:
+          $ref: '#/components/schemas/LatLng'
+
+    Address:
+      type: object
+      properties:
+        text:
+          type: string
+        lat:
+          type: number
+        lng:
+          type: number
+        geocoded:
+          type: boolean
+
+    Recipient:
+      type: object
+      properties:
+        name:
+          type: string
+        phone:
+          type: string
+        field:
+          type: string
+
+    OrderStatus:
+      type: string
+      enum: [available, assigned, delivered, returned]
+
+    StopStatus:
+      type: string
+      enum: [pending, in_progress, completed, failed, rts, reschedule]
+
+    ManifestStatus:
+      type: string
+      enum: [pending, in_progress, completed]
+
+    DeliveryOutcome:
+      type: string
+      enum: [delivered, failed]
+
+    DeliveryNextAction:
+      type: string
+      enum: [reschedule, rts, retry]
+
+    RiderLoginResponse:
+      type: object
+      properties:
+        token:
+          type: string
+        rider:
+          $ref: '#/components/schemas/Rider'
+        pinRequired:
+          type: boolean
+        pinVersion:
+          type: integer
+        serverTimestamp:
+          type: string
+          format: date-time
+
+    AdminLoginResponse:
+      type: object
+      properties:
+        token:
+          type: string
+        admin:
+          type: object
+          properties:
+            id:
+              type: string
+            name:
+              type: string
+            email:
+              type: string
+            role:
+              type: string
+              example: admin
+
+    Zone:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        hubs:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              name:
+                type: string
+
+    Hub:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        lat:
+          type: number
+        lng:
+          type: number
+        radiusMeters:
+          type: integer
+        zoneId:
+          type: string
+        zone:
+          $ref: '#/components/schemas/Zone'
+
+    Rider:
+      type: object
+      properties:
+        id:
+          type: string
+        employeeId:
+          type: string
+        name:
+          type: string
+        email:
+          type: string
+        phone:
+          type: string
+        hubId:
+          type: string
+        vehicleType:
+          type: string
+        isActive:
+          type: boolean
+        hub:
+          type: object
+
+    CreateRiderRequest:
+      type: object
+      required: [employeeId, name, email, phone, password, hubId]
+      properties:
+        employeeId:
+          type: string
+        name:
+          type: string
+        email:
+          type: string
+        phone:
+          type: string
+        password:
+          type: string
+        hubId:
+          type: string
+        vehicleType:
+          type: string
+          default: motorcycle
+
+    UpdateRiderRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        email:
+          type: string
+        phone:
+          type: string
+        password:
+          type: string
+        hubId:
+          type: string
+        vehicleType:
+          type: string
+        isActive:
+          type: boolean
+
+    Order:
+      type: object
+      properties:
+        id:
+          type: string
+        trackingNumber:
+          type: string
+        recipientName:
+          type: string
+        recipientPhone:
+          type: string
+        recipientField:
+          type: string
+        addressText:
+          type: string
+        addressLat:
+          type: number
+        addressLng:
+          type: number
+        addressGeocoded:
+          type: boolean
+        serviceType:
+          type: string
+        codAmount:
+          type: number
+        packageDetails:
+          type: string
+        specialInstructions:
+          type: string
+        hubId:
+          type: string
+        status:
+          $ref: '#/components/schemas/OrderStatus'
+        assignedManifestId:
+          type: string
+          nullable: true
+        hub:
+          type: object
+
+    CreateOrderRequest:
+      type: object
+      required:
+        - trackingNumber
+        - recipient
+        - address
+        - hub
+        - zone
+      properties:
+        trackingNumber:
+          type: string
+        recipient:
+          $ref: '#/components/schemas/Recipient'
+        address:
+          $ref: '#/components/schemas/Address'
+        serviceType:
+          type: string
+        codAmount:
+          type: number
+        packageDetails:
+          type: string
+        specialInstructions:
+          type: string
+        hub:
+          type: string
+          description: Hub name
+        zone:
+          type: string
+          description: Zone name
+
+    OrderScanResult:
+      type: object
+      properties:
+        id:
+          type: string
+        _id:
+          type: string
+        trackingNumber:
+          type: string
+        recipient:
+          $ref: '#/components/schemas/Recipient'
+        address:
+          $ref: '#/components/schemas/Address'
+        serviceType:
+          type: string
+        codAmount:
+          type: number
+        packageDetails:
+          type: string
+        specialInstructions:
+          type: string
+        hub:
+          type: string
+        zone:
+          type: string
+        status:
+          $ref: '#/components/schemas/OrderStatus'
+
+    DeliveryResult:
+      type: object
+      properties:
+        id:
+          type: string
+        outcome:
+          $ref: '#/components/schemas/DeliveryOutcome'
+        timestamp:
+          type: string
+          format: date-time
+        signatureUri:
+          type: string
+          nullable: true
+        photoUri:
+          type: string
+          nullable: true
+        codCollected:
+          type: number
+          nullable: true
+        failureReason:
+          type: string
+          nullable: true
+        failureNotes:
+          type: string
+          nullable: true
+        nextAction:
+          $ref: '#/components/schemas/DeliveryNextAction'
+
+    StopDetail:
+      type: object
+      properties:
+        id:
+          type: string
+        stopId:
+          type: string
+        manifestId:
+          type: string
+        orderId:
+          type: string
+        sequence:
+          type: integer
+        status:
+          $ref: '#/components/schemas/StopStatus'
+        distance:
+          type: number
+        eta:
+          type: string
+        attemptCount:
+          type: integer
+        maxAttempts:
+          type: integer
+        order:
+          $ref: '#/components/schemas/Order'
+        deliveryResult:
+          $ref: '#/components/schemas/DeliveryResult'
+        manifest:
+          type: object
+          properties:
+            id:
+              type: string
+            manifestId:
+              type: string
+
+    ManifestSummary:
+      type: object
+      properties:
+        id:
+          type: string
+        manifestId:
+          type: string
+        date:
+          type: string
+          format: date
+        status:
+          $ref: '#/components/schemas/ManifestStatus'
+        totalStops:
+          type: integer
+        completedStops:
+          type: integer
+        failedStops:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+
+    ManifestWithStops:
+      allOf:
+        - $ref: '#/components/schemas/ManifestSummary'
+        - type: object
+          properties:
+            riderId:
+              type: string
+            stops:
+              type: array
+              items:
+                $ref: '#/components/schemas/StopDetail'
+
+    CompleteDeliveryRequest:
+      type: object
+      properties:
+        signatureBase64:
+          type: string
+        photoBase64:
+          type: string
+        codCollected:
+          type: number
+        timestamp:
+          type: string
+          format: date-time
+
+    FailDeliveryRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason:
+          type: string
+        notes:
+          type: string
+        photoBase64:
+          type: string
+        nextAction:
+          type: string
+          enum: [reschedule, rts, retry]
+        timestamp:
+          type: string
+          format: date-time
+
+    BatchSyncAction:
+      type: object
+      required: [clientId, stopId, type]
+      properties:
+        clientId:
+          type: string
+        stopId:
+          type: string
+        type:
+          type: string
+          enum: [complete, fail, rts]
+        data:
+          type: object
+          additionalProperties: true
+
+    RouteComputeResult:
+      type: object
+      properties:
+        encodedPolyline:
+          type: string
+        durationSeconds:
+          type: integer
+        distanceMeters:
+          type: integer
+        distanceKm:
+          type: string
+        eta:
+          type: string
+
+    DashboardStats:
+      type: object
+      properties:
+        riders:
+          type: object
+          properties:
+            total:
+              type: integer
+            active:
+              type: integer
+        manifests:
+          type: object
+          properties:
+            total:
+              type: integer
+            today:
+              type: integer
+            active:
+              type: integer
+        stops:
+          type: object
+          properties:
+            total:
+              type: integer
+            pending:
+              type: integer
+            inProgress:
+              type: integer
+            completed:
+              type: integer
+            failed:
+              type: integer
+            rts:
+              type: integer
+            reschedule:
+              type: integer
+        deliveryRate:
+          type: integer
+        cod:
+          type: object
+          properties:
+            totalExpected:
+              type: number
+            totalCollected:
+              type: number
+        recentActivity:
+          type: array
+          items:
+            $ref: '#/components/schemas/StopDetail'
+        serviceBreakdown:
+          type: array
+          items:
+            type: object
+            properties:
+              _id:
+                type: string
+              count:
+                type: integer
+
+security:
+  - RiderAccessToken: []

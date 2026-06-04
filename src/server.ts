@@ -24,6 +24,7 @@ import routeRouter from './routes/route';
 import aiRouter from './routes/ai';
 import { authMiddleware } from './middleware/rider-auth';
 import { adminMiddleware } from './middleware/admin-auth';
+import { setupSwagger } from './swagger';
 
 
 const app = express();
@@ -37,6 +38,8 @@ app.use(httpLogger);
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
+
+setupSwagger(app);
 
 app.use(authMiddleware);
 
