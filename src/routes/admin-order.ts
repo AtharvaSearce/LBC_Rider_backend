@@ -111,9 +111,9 @@ async function buildOrderCreateData(
     specialInstructions: item.specialInstructions ?? '',
     hubId: hubResult.hubId,
     status: OrderStatus.available,
-  } satisfies Omit<Prisma.OrderUncheckedCreateInput, 'stopId'>;
+  } satisfies Prisma.OrderUncheckedCreateInput;
 
-  return { data: data as Prisma.OrderUncheckedCreateInput };
+  return { data };
 }
 
 async function buildOrderUpdateData(
@@ -292,17 +292,7 @@ router.post('/bulk', async (req: Request, res: Response) => {
 
 router.post('/', async (req: Request, res: Response) => {
   try {
-    const {
-      trackingNumber,
-      recipient,
-      address,
-      serviceType,
-      codAmount,
-      packageDetails,
-      specialInstructions,
-      hub,
-      zone,
-    } = req.body;
+    const { trackingNumber, recipient, address, hub, zone } = req.body;
 
     if (
       !trackingNumber ||

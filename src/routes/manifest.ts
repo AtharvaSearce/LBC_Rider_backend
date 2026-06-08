@@ -10,11 +10,11 @@ import logger from '../utils/logger';
 
 const router = Router();
 
-const FAILED_STOP_STATUSES: StopStatus[] = [
+const FAILED_STOP_STATUSES = new Set<StopStatus>([
   StopStatus.failed,
   StopStatus.rts,
   StopStatus.reschedule,
-];
+]);
 
 const manifestWithStopsInclude = {
   stops: {
@@ -160,7 +160,7 @@ router.post('/cleanup', async (req: Request, res: Response) => {
         data: {
           status: ManifestStatus.completed,
           failedStops: updatedStops.filter((s) =>
-            FAILED_STOP_STATUSES.includes(s.status)
+            FAILED_STOP_STATUSES.has(s.status)
           ).length,
         },
       });
@@ -595,7 +595,7 @@ router.delete('/stop/:stopId', async (req: Request, res: Response) => {
             (s) => s.status === StopStatus.completed
           ).length,
           failedStops: refreshedStops.filter((s) =>
-            FAILED_STOP_STATUSES.includes(s.status)
+            FAILED_STOP_STATUSES.has(s.status)
           ).length,
           ...(refreshedStops.length === 0 && {
             status: ManifestStatus.completed,

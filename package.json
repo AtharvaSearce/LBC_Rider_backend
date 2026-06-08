@@ -15,7 +15,8 @@
     "db:studio": "prisma studio",
     "test": "jest",
     "test:watch": "jest --watch",
-    "test:coverage": "jest --coverage"
+    "test:coverage": "jest --coverage",
+    "sonar": "npm run test:coverage && node scripts/sonar-scan.js"
   },
   "prisma": {
     "seed": "npx ts-node prisma/seed.ts"
@@ -43,6 +44,7 @@
     "yaml": "^2.9.0"
   },
   "devDependencies": {
+    "@sonar/scan": "^4.3.0",
     "@types/bcryptjs": "^2.4.6",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",

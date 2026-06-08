@@ -11,7 +11,7 @@ const ACTIVE_STATUSES: StopStatus[] = [
   StopStatus.in_progress,
 ];
 
-const FAILED_STATUSES: StopStatus[] = [StopStatus.failed, StopStatus.rts];
+const FAILED_STATUSES = new Set<StopStatus>([StopStatus.failed, StopStatus.rts]);
 
 function getGeminiModel() {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -92,21 +92,26 @@ async function getLatestManifest(riderId: string) {
 
 async function executeOptimizeRoute(
   riderId: string,
-  args: { priorityStopId?: string; priorityRecipientName?: string }
+  args: Record<string, unknown>
 ) {
   const manifest = await getLatestManifest(riderId);
   if (!manifest) return { error: 'No manifest found' };
 
-  let priorityStopId = args.priorityStopId;
+  let priorityStopId =
+    typeof args.priorityStopId === 'string' ? args.priorityStopId : undefined;
+  const priorityRecipientName =
+    typeof args.priorityRecipientName === 'string'
+      ? args.priorityRecipientName
+      : undefined;
 
-  if (!priorityStopId && args.priorityRecipientName) {
+  if (!priorityStopId && priorityRecipientName) {
     const stop = await prisma.stop.findFirst({
       where: {
         manifestId: manifest.id,
         status: { in: ACTIVE_STATUSES },
         order: {
           recipientName: {
-            contains: args.priorityRecipientName,
+            contains: priorityRecipientName,
             mode: 'insensitive',
           },
         },
@@ -160,21 +165,28 @@ async function executeOptimizeRoute(
 
 async function executeFilterDeliveries(
   _riderId: string,
-  args: { date?: string; status?: string }
+  args: Record<string, unknown>
 ) {
+  const date = typeof args.date === 'string' ? args.date : 'today';
+  const status = typeof args.status === 'string' ? args.status : 'all';
+
   return {
     action: {
       type: 'NAVIGATE',
       tab: 'deliveries',
       filters: {
-        date: args.date || 'today',
-        status: args.status || 'all',
+        date,
+        status,
       },
     },
   };
 }
 
-async function executeQueryStatus(riderId: string, args: { metric: string }) {
+async function executeQueryStatus(
+  riderId: string,
+  args: Record<string, unknown>
+) {
+  const metric = typeof args.metric === 'string' ? args.metric : 'summary';
   const manifest = await getLatestManifest(riderId);
   if (!manifest) return { error: 'No manifest found' };
 
@@ -190,7 +202,7 @@ async function executeQueryStatus(riderId: string, args: { metric: string }) {
     .length;
   const completed = stops.filter((s) => s.status === StopStatus.completed)
     .length;
-  const failed = stops.filter((s) => FAILED_STATUSES.includes(s.status)).length;
+  const failed = stops.filter((s) => FAILED_STATUSES.has(s.status)).length;
   const codTotal = stops
     .filter(
       (s) => s.status === StopStatus.completed && s.deliveryResult?.codCollected
@@ -219,7 +231,7 @@ async function executeQueryStatus(riderId: string, args: { metric: string }) {
     summary: { total: stops.length, remaining, completed, failed, codTotal },
   };
 
-  return { metric: args.metric, data: stats[args.metric] ?? stats.summary };
+  return { metric, data: stats[metric] ?? stats.summary };
 }
 
 router.post('/command', async (req: Request, res: Response) => {
@@ -259,7 +271,7 @@ router.post('/command', async (req: Request, res: Response) => {
 Current manifest: ${manifest?.manifestId || 'N/A'}
 Total stops: ${stops.length}
 Completed: ${stops.filter((s) => s.status === StopStatus.completed).length}
-Failed: ${stops.filter((s) => FAILED_STATUSES.includes(s.status)).length}
+Failed: ${stops.filter((s) => FAILED_STATUSES.has(s.status)).length}
 Remaining: ${stops.filter((s) => ACTIVE_STATUSES.includes(s.status)).length}
 
 Current stops (pending/in-progress):
@@ -294,22 +306,13 @@ Use the available functions to fulfill the rider's request. Be concise and helpf
 
       switch (name) {
         case 'optimize_route':
-          actionResult = await executeOptimizeRoute(
-            riderId,
-            args as { priorityStopId?: string; priorityRecipientName?: string }
-          );
+          actionResult = await executeOptimizeRoute(riderId, args);
           break;
         case 'filter_deliveries':
-          actionResult = await executeFilterDeliveries(
-            riderId,
-            args as { date?: string; status?: string }
-          );
+          actionResult = await executeFilterDeliveries(riderId, args);
           break;
         case 'query_status':
-          actionResult = await executeQueryStatus(
-            riderId,
-            args as { metric: string }
-          );
+          actionResult = await executeQueryStatus(riderId, args);
           break;
         default:
           actionResult = { error: `Unknown function: ${name}` };

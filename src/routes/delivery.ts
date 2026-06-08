@@ -15,11 +15,11 @@ type TxClient = Omit<PrismaClient, '$connect' | '$disconnect' | '$on' | '$transa
 
 const router = Router();
 
-const DONE_STOP_STATUSES: StopStatus[] = [
+const DONE_STOP_STATUSES = new Set<StopStatus>([
   StopStatus.completed,
   StopStatus.rts,
   StopStatus.reschedule,
-];
+]);
 
 const stopDetailInclude = {
   order: true,
@@ -67,7 +67,7 @@ async function promoteNextPendingStop(db: TxClient, manifestId: string, excludeS
     include: stopDetailInclude,
   });
 
-  if (nextStop && nextStop.status === StopStatus.pending) {
+  if (nextStop?.status === StopStatus.pending) {
     return db.stop.update({
       where: { id: nextStop.id },
       data: { status: StopStatus.in_progress },
@@ -184,7 +184,7 @@ router.post('/:stopId/complete', async (req: Request, res: Response) => {
     const orderId = stop.orderId;
 
     // Idempotency guard — if stop already terminal, return existing result
-    if (DONE_STOP_STATUSES.includes(stop.status)) {
+    if (DONE_STOP_STATUSES.has(stop.status)) {
       logger.info('[Delivery] Idempotent replay — stop already done', { stopId, status: stop.status });
       res.json({
         message: 'Delivery already processed',
@@ -238,7 +238,7 @@ router.post('/:stopId/complete', async (req: Request, res: Response) => {
         select: { status: true, orderId: true },
       });
       const allDone = allStops.every((s) =>
-        DONE_STOP_STATUSES.includes(s.status)
+        DONE_STOP_STATUSES.has(s.status)
       );
       if (allDone) {
         await tx.manifest.update({
@@ -285,7 +285,7 @@ router.post('/:stopId/complete', async (req: Request, res: Response) => {
     res.json({
       message: 'Delivery completed successfully',
       completedStop: completedStop.completedStop,
-      nextStop: completedStop.nextStop || null,
+      nextStop: completedStop.nextStop ?? null,
     });
   } catch (err) {
     logger.error('[Delivery] Complete error', { err, stopId: req.params.stopId });
@@ -320,7 +320,7 @@ router.post('/:stopId/fail', async (req: Request, res: Response) => {
     }
 
     // Idempotency guard — if stop already terminal, return existing result
-    if (DONE_STOP_STATUSES.includes(stop.status)) {
+    if (DONE_STOP_STATUSES.has(stop.status)) {
       logger.info('[Delivery] Idempotent replay — stop already done', { stopId, status: stop.status });
       res.json({
         message: 'Delivery already processed',
@@ -406,7 +406,7 @@ router.post('/:stopId/fail', async (req: Request, res: Response) => {
         select: { status: true, orderId: true },
       });
       const allDone = allStops.every((s) =>
-        DONE_STOP_STATUSES.includes(s.status)
+        DONE_STOP_STATUSES.has(s.status)
       );
       if (allDone) {
         await tx.manifest.update({
@@ -460,7 +460,7 @@ router.post('/:stopId/fail', async (req: Request, res: Response) => {
     res.json({
       message: statusMessages[newStatus] || statusMessages.failed,
       failedStop: failedStop.failedStop,
-      nextStop: failedStop.nextStop || null,
+      nextStop: failedStop.nextStop ?? null,
     });
   } catch (err) {
     logger.error('[Delivery] Fail error', { err, stopId: req.params.stopId });
@@ -490,7 +490,7 @@ router.post('/:stopId/rts', async (req: Request, res: Response) => {
     }
 
     // Idempotency guard — if stop already terminal, return existing result
-    if (DONE_STOP_STATUSES.includes(stop.status)) {
+    if (DONE_STOP_STATUSES.has(stop.status)) {
       logger.info('[Delivery] Idempotent replay — stop already done', { stopId, status: stop.status });
       res.json({
         message: 'RTS already processed',
@@ -576,7 +576,7 @@ router.post('/batch-sync', async (req: Request, res: Response) => {
         }
 
         // If stop is already in a terminal state, skip (idempotent)
-        if (DONE_STOP_STATUSES.includes(stop.status)) {
+        if (DONE_STOP_STATUSES.has(stop.status)) {
           results.push({ clientId, status: 'skipped', stopId, reason: 'already_processed' });
           continue;
         }
@@ -670,7 +670,7 @@ router.post('/batch-sync', async (req: Request, res: Response) => {
               });
             }
 
-            if (DONE_STOP_STATUSES.includes(newStatus)) {
+            if (DONE_STOP_STATUSES.has(newStatus)) {
               await promoteNextPendingStop(tx, stop.manifestId);
             }
           }, { timeout: 15000 });

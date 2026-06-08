@@ -1,5 +1,5 @@
 import winston from 'winston';
-import path from 'path';
+import path from 'node:path';
 
 const { combine, timestamp, printf, colorize, errors, json } = winston.format;
 
