@@ -15,17 +15,17 @@ const ACTIVE_STOP_STATUSES: StopStatus[] = [
   StopStatus.in_progress,
 ];
 
-const DONE_STOP_STATUSES: StopStatus[] = [
+const DONE_STOP_STATUSES = new Set<StopStatus>([
   StopStatus.completed,
   StopStatus.rts,
   StopStatus.reschedule,
-];
+]);
 
-const FAILED_STOP_STATUSES: StopStatus[] = [
+const FAILED_STOP_STATUSES = new Set<StopStatus>([
   StopStatus.failed,
   StopStatus.rts,
   StopStatus.reschedule,
-];
+]);
 
 const stopInclude = {
   manifest: {
@@ -78,13 +78,13 @@ async function syncManifestCounters(manifestId: string) {
   const completedStops = stops.filter((s) => s.status === StopStatus.completed)
     .length;
   const failedStops = stops.filter((s) =>
-    FAILED_STOP_STATUSES.includes(s.status)
+    FAILED_STOP_STATUSES.has(s.status)
   ).length;
 
   let status: ManifestStatus | undefined;
 
   if (stops.length > 0) {
-    const allDone = stops.every((s) => DONE_STOP_STATUSES.includes(s.status));
+    const allDone = stops.every((s) => DONE_STOP_STATUSES.has(s.status));
     if (allDone) {
       status = ManifestStatus.completed;
     } else if (stops.some((s) => s.status === StopStatus.in_progress)) {

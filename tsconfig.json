@@ -12,12 +12,7 @@
     "resolveJsonModule": true,
     "declaration": true,
     "declarationMap": true,
-    "sourceMap": true,
-    "ignoreDeprecations": "6.0",
-    "baseUrl": ".",
-    "paths": {
-      "@prisma/client": ["node_modules/@prisma/client"]
-    }
+    "sourceMap": true
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]

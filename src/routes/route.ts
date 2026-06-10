@@ -113,8 +113,8 @@ router.post('/optimize', async (req: Request, res: Response) => {
           {
             startLocation: depotLocation,
             endLocation: depotLocation,
-            costPerKilometer: 1.0,
-            costPerHour: 1.0,
+            costPerKilometer: 1,
+            costPerHour: 1,
           },
         ],
         globalStartTime: new Date().toISOString(),
@@ -140,7 +140,7 @@ router.post('/optimize', async (req: Request, res: Response) => {
         routes?: { visits?: { shipmentIndex: number }[] }[];
       };
 
-      if (fleetData.routes && fleetData.routes[0]?.visits) {
+      if (fleetData.routes?.[0]?.visits) {
         const visits = fleetData.routes[0].visits;
         let newOrder: string[] = [];
 
@@ -268,7 +268,7 @@ router.post('/compute', async (req: Request, res: Response) => {
 
     if (data.routes && data.routes.length > 0) {
       const route = data.routes[0];
-      const durationSeconds = parseInt(route.duration?.replace('s', '') || '0', 10);
+      const durationSeconds = Number.parseInt(route.duration?.replace('s', '') || '0', 10);
       const distanceMeters = route.distanceMeters || 0;
 
       const etaMinutes = Math.ceil(durationSeconds / 60);
@@ -376,10 +376,11 @@ router.post('/reorder', async (req: Request, res: Response) => {
     const stopIdToDbId = new Map(reorderableStops.map((s) => [s.stopId, s.id]));
 
     await prisma.$transaction(async (tx) => {
-      for (const stop of reorderableStops) {
+      for (let i = 0; i < reorderableStops.length; i++) {
+        const stop = reorderableStops[i];
         await tx.stop.update({
           where: { id: stop.id },
-          data: { sequence: 10000 + Math.random() * 89999, status: StopStatus.pending },
+          data: { sequence: 10000 + i, status: StopStatus.pending },
         });
       }
 

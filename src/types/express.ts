@@ -1,5 +1,5 @@
-import { AdminTokenPayload } from '../middleware/admin-auth';
-import { RiderTokenPayload } from '../middleware/rider-auth';
+import type { AdminTokenPayload } from '../middleware/admin-auth';
+import type { RiderTokenPayload } from '../middleware/rider-auth';
 
 declare global {
   namespace Express {
@@ -10,4 +10,4 @@ declare global {
   }
 }
 
-export {};
+export type { AdminTokenPayload, RiderTokenPayload };
