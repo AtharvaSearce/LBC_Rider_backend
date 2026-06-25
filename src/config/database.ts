@@ -7,6 +7,7 @@ export async function connectDatabase(): Promise<void> {
   }
 
   try {
+    console.log("HERE");
     await prisma.$connect();
     logger.info('[PostgreSQL] Connected via Prisma');
   } catch (err) {
