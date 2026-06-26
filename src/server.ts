@@ -22,6 +22,7 @@ import adminDashboardRouter from './routes/admin-dashboard';
 import deliveryRouter from './routes/delivery';
 import routeRouter from './routes/route';
 import aiRouter from './routes/ai';
+import notificationsRouter from './routes/notifications';
 import { authMiddleware } from './middleware/rider-auth';
 import { adminMiddleware } from './middleware/admin-auth';
 import { setupSwagger } from './swagger';
@@ -57,6 +58,7 @@ app.use('/api/attendance', attendanceRouter);
 app.use('/api/delivery', deliveryRouter);
 app.use('/api/route', routeRouter);
 app.use('/api/ai', aiRouter);
+app.use('/api/notifications', notificationsRouter);
 app.use('/api/admin/dashboard', adminMiddleware, adminDashboardRouter);
 
 async function start() {

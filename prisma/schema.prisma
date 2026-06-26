@@ -40,6 +40,12 @@ enum DeliveryNextAction {
   retry
 }
 
+enum NotificationType {
+  delivery
+  manifest
+  system
+}
+
 model Zone {
   id        String   @id @default(cuid())
   name      String   @unique
@@ -77,9 +83,10 @@ model Rider {
   hub          Hub        @relation(fields: [hubId], references: [id], onDelete: Restrict)
   vehicleType  String     @default("motorcycle")
   isActive     Boolean    @default(true)
-  manifests    Manifest[]
-  createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
+  manifests      Manifest[]
+  notifications  Notification[]
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
 
   @@index([hubId])
 }
@@ -153,6 +160,21 @@ model Stop {
   @@unique([manifestId, sequence])
   @@index([manifestId])
   @@index([orderId])
+}
+
+model Notification {
+  id        String           @id @default(uuid())
+  riderId   String
+  rider     Rider            @relation(fields: [riderId], references: [id], onDelete: Cascade)
+  type      NotificationType
+  title     String
+  message   String
+  data      Json?
+  read      Boolean          @default(false)
+  createdAt DateTime         @default(now())
+
+  @@index([riderId])
+  @@index([createdAt])
 }
 
 model DeliveryResult {

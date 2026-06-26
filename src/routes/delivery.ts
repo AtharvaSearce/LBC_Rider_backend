@@ -3,6 +3,7 @@ import {
   DeliveryNextAction,
   DeliveryOutcome,
   ManifestStatus,
+  NotificationType,
   OrderStatus,
   Prisma,
   PrismaClient,
@@ -281,6 +282,21 @@ router.post('/:stopId/complete', async (req: Request, res: Response) => {
       return { completedStop: result, nextStop };
     }, { timeout: 15000 });
 
+    const recipientName = stop.order?.recipientName ?? 'recipient';
+    try {
+      await prisma.notification.create({
+        data: {
+          riderId: req.rider!.riderId,
+          type: NotificationType.delivery,
+          title: 'Delivery Completed',
+          message: `Delivery to ${recipientName} completed successfully`,
+          data: { stopId, trackingNumber: stop.order?.trackingNumber },
+        },
+      });
+    } catch (notifErr) {
+      logger.warn('[Delivery] Failed to create notification', { notifErr });
+    }
+
     logger.info('[Delivery] Stop completed', { stopId, riderId: req.rider?.riderId });
     res.json({
       message: 'Delivery completed successfully',
@@ -450,6 +466,23 @@ router.post('/:stopId/fail', async (req: Request, res: Response) => {
       failed: `Delivery failed (attempt ${newAttemptCount}/${stop.maxAttempts}). Will retry later in route.`,
     };
 
+    const failRecipient = stop.order?.recipientName ?? 'recipient';
+    try {
+      await prisma.notification.create({
+        data: {
+          riderId: req.rider!.riderId,
+          type: NotificationType.delivery,
+          title: newStatus === StopStatus.rts ? 'Return to Sender' : 'Delivery Failed',
+          message: newStatus === StopStatus.rts
+            ? `Package for ${failRecipient} marked for return to sender`
+            : `Delivery to ${failRecipient} failed — ${reason}`,
+          data: { stopId, trackingNumber: stop.order?.trackingNumber, reason },
+        },
+      });
+    } catch (notifErr) {
+      logger.warn('[Delivery] Failed to create notification', { notifErr });
+    }
+
     logger.info('[Delivery] Stop failed', {
       stopId,
       newStatus,
@@ -537,6 +570,21 @@ router.post('/:stopId/rts', async (req: Request, res: Response) => {
         include: stopDetailInclude,
       });
     }, { timeout: 15000 });
+
+    const rtsRecipient = stop.order?.recipientName ?? 'recipient';
+    try {
+      await prisma.notification.create({
+        data: {
+          riderId: req.rider!.riderId,
+          type: NotificationType.delivery,
+          title: 'Return to Sender',
+          message: `Package for ${rtsRecipient} (${stop.order?.trackingNumber ?? ''}) marked for return to sender`,
+          data: { stopId, trackingNumber: stop.order?.trackingNumber },
+        },
+      });
+    } catch (notifErr) {
+      logger.warn('[Delivery] Failed to create notification', { notifErr });
+    }
 
     logger.info('[Delivery] Stop marked RTS', { stopId, riderId: req.rider?.riderId });
     res.json({ message: 'Stop marked as Return to Sender', stop: updatedStop });
