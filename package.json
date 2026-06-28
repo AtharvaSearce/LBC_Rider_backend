@@ -12,6 +12,7 @@
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",
     "db:seed": "npx ts-node prisma/seed.ts",
+    "db:seed:manila": "npx ts-node prisma/seed-manila.ts",
     "db:studio": "prisma studio",
     "test": "jest",
     "test:watch": "jest --watch",

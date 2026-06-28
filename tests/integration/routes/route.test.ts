@@ -115,30 +115,130 @@ describe('POST /api/route/optimize', () => {
     // Fleet Routing should not have been called
   });
 
-  it('200 reorders stops via Fleet Routing response and bumps sequence above terminal count', async () => {
+  it('200 optimizes by geography (nearest-neighbour) and renumbers the manifest 1..N', async () => {
+    prismaMock.manifest.findFirst.mockResolvedValue(makeManifest({ id: 'm-1' }) as never);
+
+    // From origin (0,0): nearest is bbbb (0,1), then cccc (0,2), then aaaa (0,3)
+    const stops = [
+      makeStopWithOrder({ id: 'db-1', stopId: 'stop-aaaa', addressLat: 0, addressLng: 3 }),
+      makeStopWithOrder({ id: 'db-2', stopId: 'stop-bbbb', addressLat: 0, addressLng: 1 }),
+      makeStopWithOrder({ id: 'db-3', stopId: 'stop-cccc', addressLat: 0, addressLng: 2 }),
+    ];
+    prismaMock.stop.findMany
+      .mockResolvedValueOnce(stops as never) // primary stops
+      .mockResolvedValueOnce([] as never) // failed stops
+      .mockResolvedValueOnce(stops as never); // resequence: all stops
+
+    const res = await request(app)
+      .post('/api/route/optimize')
+      .set('Authorization', riderAuthHeader())
+      .send({ manifestId: 'm-1', origin: { lat: 0, lng: 0 } });
+
+    expect(res.status).toBe(200);
+    expect(res.body.newOrder).toEqual(['stop-bbbb', 'stop-cccc', 'stop-aaaa']);
+    expect(res.body.firstStopId).toBe('stop-bbbb');
+    expect(res.body.message).toBe('Route optimized for shortest path');
+
+    // No terminal stops -> contiguous 1,2,3; first stop in_progress, rest pending
+    expect(prismaMock.stop.update).toHaveBeenCalledWith({
+      where: { id: 'db-2' },
+      data: { sequence: 1, status: StopStatus.in_progress },
+    });
+    expect(prismaMock.stop.update).toHaveBeenCalledWith({
+      where: { id: 'db-3' },
+      data: { sequence: 2, status: StopStatus.pending },
+    });
+    expect(prismaMock.stop.update).toHaveBeenCalledWith({
+      where: { id: 'db-1' },
+      data: { sequence: 3, status: StopStatus.pending },
+    });
+  });
+
+  it('200 keeps completed stops up front and renumbers active stops after them', async () => {
+    prismaMock.manifest.findFirst.mockResolvedValue(makeManifest({ id: 'm-1' }) as never);
+
+    // A completed stop holds an arbitrary high sequence (4) — the previous
+    // terminalCount-based numbering would have collided here.
+    const done = makeStopWithOrder({
+      id: 'db-done',
+      stopId: 'stop-done',
+      sequence: 4,
+      status: StopStatus.completed,
+    });
+    const active = [
+      makeStopWithOrder({ id: 'db-1', stopId: 'stop-aaaa', sequence: 1, addressLat: 0, addressLng: 3 }),
+      makeStopWithOrder({ id: 'db-2', stopId: 'stop-bbbb', sequence: 2, addressLat: 0, addressLng: 1 }),
+    ];
+    prismaMock.stop.findMany
+      .mockResolvedValueOnce(active as never) // primary stops
+      .mockResolvedValueOnce([] as never) // failed stops
+      .mockResolvedValueOnce([done, ...active] as never); // resequence: all stops
+
+    const res = await request(app)
+      .post('/api/route/optimize')
+      .set('Authorization', riderAuthHeader())
+      .send({ manifestId: 'm-1', origin: { lat: 0, lng: 0 } });
+
+    expect(res.status).toBe(200);
+    expect(res.body.newOrder).toEqual(['stop-bbbb', 'stop-aaaa']);
+
+    // Completed stop is renumbered to 1 with its status untouched
+    expect(prismaMock.stop.update).toHaveBeenCalledWith({
+      where: { id: 'db-done' },
+      data: { sequence: 1 },
+    });
+    // Active stops follow: bbbb (closest) becomes in_progress at 2
+    expect(prismaMock.stop.update).toHaveBeenCalledWith({
+      where: { id: 'db-2' },
+      data: { sequence: 2, status: StopStatus.in_progress },
+    });
+    expect(prismaMock.stop.update).toHaveBeenCalledWith({
+      where: { id: 'db-1' },
+      data: { sequence: 3, status: StopStatus.pending },
+    });
+  });
+
+  it('200 places priorityStopId first and promotes it to in_progress', async () => {
     prismaMock.manifest.findFirst.mockResolvedValue(makeManifest({ id: 'm-1' }) as never);
 
     const stops = [
-      makeStopWithOrder({ id: 'db-1', stopId: 'stop-aaaa' }),
-      makeStopWithOrder({ id: 'db-2', stopId: 'stop-bbbb' }),
-      makeStopWithOrder({ id: 'db-3', stopId: 'stop-cccc' }),
+      makeStopWithOrder({ id: 'db-1', stopId: 'stop-aaaa', addressLat: 0, addressLng: 3 }),
+      makeStopWithOrder({ id: 'db-2', stopId: 'stop-bbbb', addressLat: 0, addressLng: 1 }),
+      makeStopWithOrder({ id: 'db-3', stopId: 'stop-cccc', addressLat: 0, addressLng: 2 }),
     ];
-    // primary stops, then failed-with-retry-budget (none here)
     prismaMock.stop.findMany
       .mockResolvedValueOnce(stops as never)
-      .mockResolvedValueOnce([] as never);
-    prismaMock.stop.count.mockResolvedValue(2 as never); // terminal stops already done
+      .mockResolvedValueOnce([] as never)
+      .mockResolvedValueOnce(stops as never);
 
-    // Fleet Routing returns visits in order: cccc, aaaa, bbbb
-    global.fetch = jest.fn().mockResolvedValue({
-      json: async () => ({
-        routes: [
-          {
-            visits: [{ shipmentIndex: 2 }, { shipmentIndex: 0 }, { shipmentIndex: 1 }],
-          },
-        ],
-      }),
-    }) as unknown as typeof global.fetch;
+    const res = await request(app)
+      .post('/api/route/optimize')
+      .set('Authorization', riderAuthHeader())
+      .send({ manifestId: 'm-1', priorityStopId: 'stop-cccc', origin: { lat: 0, lng: 0 } });
+
+    expect(res.status).toBe(200);
+    expect(res.body.newOrder[0]).toBe('stop-cccc');
+    expect(res.body.firstStopId).toBe('stop-cccc');
+    expect(res.body.newOrder).toHaveLength(3);
+    expect(res.body.message).toContain('stop-cccc');
+
+    // Priority stop is promoted to in_progress at sequence 1
+    expect(prismaMock.stop.update).toHaveBeenCalledWith({
+      where: { id: 'db-3' },
+      data: { sequence: 1, status: StopStatus.in_progress },
+    });
+  });
+
+  it('200 falls back to the in_progress stop as origin when none is supplied', async () => {
+    prismaMock.manifest.findFirst.mockResolvedValue(makeManifest({ id: 'm-1' }) as never);
+    const stops = [
+      makeStopWithOrder({ id: 'db-1', stopId: 'stop-aaaa', addressLat: 0, addressLng: 1, status: StopStatus.in_progress }),
+      makeStopWithOrder({ id: 'db-2', stopId: 'stop-bbbb', addressLat: 0, addressLng: 2 }),
+    ];
+    prismaMock.stop.findMany
+      .mockResolvedValueOnce(stops as never)
+      .mockResolvedValueOnce([] as never)
+      .mockResolvedValueOnce(stops as never);
 
     const res = await request(app)
       .post('/api/route/optimize')
@@ -146,109 +246,30 @@ describe('POST /api/route/optimize', () => {
       .send({ manifestId: 'm-1' });
 
     expect(res.status).toBe(200);
-    expect(res.body.newOrder).toEqual(['stop-cccc', 'stop-aaaa', 'stop-bbbb']);
-    expect(res.body.message).toBe('Route optimized for shortest path');
-
-    // Sequence numbers continue past terminal count (2): 3, 4, 5
-    expect(prismaMock.stop.updateMany).toHaveBeenNthCalledWith(1, {
-      where: { stopId: 'stop-cccc' },
-      data: { sequence: 3 },
-    });
-    expect(prismaMock.stop.updateMany).toHaveBeenNthCalledWith(2, {
-      where: { stopId: 'stop-aaaa' },
-      data: { sequence: 4 },
-    });
-    expect(prismaMock.stop.updateMany).toHaveBeenNthCalledWith(3, {
-      where: { stopId: 'stop-bbbb' },
-      data: { sequence: 5 },
-    });
-  });
-
-  it('200 places priorityStopId first when supplied alongside Fleet Routing visits', async () => {
-    prismaMock.manifest.findFirst.mockResolvedValue(makeManifest({ id: 'm-1' }) as never);
-
-    const stops = [
-      makeStopWithOrder({ id: 'db-1', stopId: 'stop-aaaa' }),
-      makeStopWithOrder({ id: 'db-2', stopId: 'stop-bbbb' }),
-      makeStopWithOrder({ id: 'db-3', stopId: 'stop-cccc' }),
-    ];
-    prismaMock.stop.findMany
-      .mockResolvedValueOnce(stops as never)
-      .mockResolvedValueOnce([] as never);
-    prismaMock.stop.count.mockResolvedValue(0 as never);
-
-    // Fleet visits: aaaa, bbbb, cccc — but caller wants ccc first
-    global.fetch = jest.fn().mockResolvedValue({
-      json: async () => ({
-        routes: [
-          {
-            visits: [{ shipmentIndex: 0 }, { shipmentIndex: 1 }, { shipmentIndex: 2 }],
-          },
-        ],
-      }),
-    }) as unknown as typeof global.fetch;
-
-    const res = await request(app)
-      .post('/api/route/optimize')
-      .set('Authorization', riderAuthHeader())
-      .send({ manifestId: 'm-1', priorityStopId: 'stop-cccc' });
-
-    expect(res.status).toBe(200);
-    expect(res.body.newOrder[0]).toBe('stop-cccc');
-    expect(res.body.newOrder).toHaveLength(3);
-    expect(res.body.message).toContain('stop-cccc');
-  });
-
-  it('200 falls back to local optimization when Fleet Routing fetch rejects', async () => {
-    prismaMock.manifest.findFirst.mockResolvedValue(makeManifest({ id: 'm-1' }) as never);
-    const stops = [
-      makeStopWithOrder({ id: 'db-1', stopId: 'stop-aaaa', sequence: 1 }),
-      makeStopWithOrder({ id: 'db-2', stopId: 'stop-bbbb', sequence: 2 }),
-    ];
-    prismaMock.stop.findMany
-      .mockResolvedValueOnce(stops as never)
-      .mockResolvedValueOnce([] as never);
-    prismaMock.stop.count.mockResolvedValue(0 as never);
-
-    global.fetch = jest.fn().mockRejectedValue(new Error('network down'));
-
-    const res = await request(app)
-      .post('/api/route/optimize')
-      .set('Authorization', riderAuthHeader())
-      .send({ manifestId: 'm-1', priorityStopId: 'stop-bbbb' });
-
-    expect(res.status).toBe(200);
-    // Local optimisation honours priority by moving bbbb to the front
-    expect(res.body.newOrder).toEqual(['stop-bbbb', 'stop-aaaa']);
-    expect(res.body.message).toContain('local optimization');
+    expect(res.body.newOrder).toEqual(['stop-aaaa', 'stop-bbbb']);
   });
 
   it('200 includes failed stops with retry budget remaining', async () => {
     prismaMock.manifest.findFirst.mockResolvedValue(makeManifest({ id: 'm-1' }) as never);
+    const aaaa = makeStopWithOrder({ id: 'db-1', stopId: 'stop-aaaa' });
+    const bbbb = makeStopWithOrder({
+      id: 'db-2',
+      stopId: 'stop-bbbb',
+      status: StopStatus.failed,
+      attemptCount: 1,
+      maxAttempts: 3,
+    });
+    const cccc = makeStopWithOrder({
+      id: 'db-3',
+      stopId: 'stop-cccc',
+      status: StopStatus.failed,
+      attemptCount: 3,
+      maxAttempts: 3,
+    });
     prismaMock.stop.findMany
-      .mockResolvedValueOnce([
-        makeStopWithOrder({ id: 'db-1', stopId: 'stop-aaaa' }),
-      ] as never)
-      .mockResolvedValueOnce([
-        // failed with retry budget left
-        makeStopWithOrder({
-          id: 'db-2',
-          stopId: 'stop-bbbb',
-          status: StopStatus.failed,
-          attemptCount: 1,
-          maxAttempts: 3,
-        }),
-        // exhausted — should be filtered out
-        makeStopWithOrder({
-          id: 'db-3',
-          stopId: 'stop-cccc',
-          status: StopStatus.failed,
-          attemptCount: 3,
-          maxAttempts: 3,
-        }),
-      ] as never);
-    prismaMock.stop.count.mockResolvedValue(0 as never);
-    global.fetch = jest.fn().mockRejectedValue(new Error('skip')); // force local path
+      .mockResolvedValueOnce([aaaa] as never) // primary stops
+      .mockResolvedValueOnce([bbbb, cccc] as never) // failed stops
+      .mockResolvedValueOnce([aaaa, bbbb, cccc] as never); // resequence: all stops
 
     const res = await request(app)
       .post('/api/route/optimize')
@@ -258,6 +279,11 @@ describe('POST /api/route/optimize', () => {
     expect(res.status).toBe(200);
     expect(res.body.newOrder).toEqual(['stop-aaaa', 'stop-bbbb']);
     expect(res.body.newOrder).not.toContain('stop-cccc');
+    // Attempt-exhausted failed stop is renumbered last but keeps failed status
+    expect(prismaMock.stop.update).toHaveBeenCalledWith({
+      where: { id: 'db-3' },
+      data: { sequence: 3 },
+    });
   });
 });
 
@@ -453,11 +479,10 @@ describe('POST /api/route/reorder', () => {
 
   it('200 promotes the first stop in the new order to in_progress and renumbers sequences', async () => {
     prismaMock.manifest.findFirst.mockResolvedValue(makeManifest({ id: 'm-1' }) as never);
-    prismaMock.stop.count.mockResolvedValue(0 as never);
     prismaMock.stop.findMany.mockResolvedValue([
-      { id: 'db-1', stopId: 'stop-aaaa' },
-      { id: 'db-2', stopId: 'stop-bbbb' },
-      { id: 'db-3', stopId: 'stop-cccc' },
+      { id: 'db-1', stopId: 'stop-aaaa', status: StopStatus.pending },
+      { id: 'db-2', stopId: 'stop-bbbb', status: StopStatus.pending },
+      { id: 'db-3', stopId: 'stop-cccc', status: StopStatus.pending },
     ] as never);
 
     const res = await request(app)
@@ -479,15 +504,15 @@ describe('POST /api/route/reorder', () => {
       where: { id: 'db-2' },
       data: { sequence: 1, status: StopStatus.in_progress },
     });
-    // Second: aaaa gets seq=2, no status promotion
+    // Second: aaaa gets seq=2 + reset to pending
     expect(prismaMock.stop.update).toHaveBeenCalledWith({
       where: { id: 'db-1' },
-      data: { sequence: 2 },
+      data: { sequence: 2, status: StopStatus.pending },
     });
-    // Third: cccc gets seq=3, no status promotion
+    // Third: cccc gets seq=3 + reset to pending
     expect(prismaMock.stop.update).toHaveBeenCalledWith({
       where: { id: 'db-3' },
-      data: { sequence: 3 },
+      data: { sequence: 3, status: StopStatus.pending },
     });
   });
 });
