@@ -709,6 +709,10 @@ paths:
     post:
       tags: [AI]
       summary: Natural-language rider command (Gemini)
+      description: |
+        Processes a voice/text command from the rider app using Gemini function calling.
+        Returns a natural-language `message`, optional client `action` for the Flutter app,
+        and tool `data` from the server.
       requestBody:
         required: true
         content:
@@ -720,6 +724,14 @@ paths:
                 text:
                   type: string
                   example: How many deliveries left?
+                origin:
+                  type: object
+                  description: Rider GPS location for route optimization
+                  properties:
+                    lat:
+                      type: number
+                    lng:
+                      type: number
       responses:
         '200':
           content:
@@ -731,15 +743,58 @@ paths:
                     type: string
                     enum:
                       - optimize_route
-                      - filter_deliveries
+                      - query_route_stats
                       - query_status
+                      - find_stop
+                      - list_stops
+                      - navigate_app
+                      - filter_deliveries
                       - CONVERSATIONAL
                   message:
                     type: string
                   action:
                     nullable: true
+                    description: Client-side action (NAVIGATE, REFRESH_MANIFEST, OPEN_ROUTE)
                   data:
                     nullable: true
+                    description: Server tool result payload
+
+  /api/ai/command/stream:
+    post:
+      tags: [AI]
+      summary: Streaming natural-language rider command (SSE)
+      description: |
+        Same as `/api/ai/command` but returns Server-Sent Events for real-time UI:
+        - `status` — system status messages (transient)
+        - `thinking` — reasoning trace steps (Chain of Thought)
+        - `tool_start` / `tool_end` — tool execution status
+        - `message_delta` — streamed answer text
+        - `done` — final response payload
+        - `error` — failure message
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text:
+                  type: string
+                origin:
+                  type: object
+                  properties:
+                    lat:
+                      type: number
+                    lng:
+                      type: number
+      responses:
+        '200':
+          description: SSE stream (`text/event-stream`)
+          content:
+            text/event-stream:
+              schema:
+                type: string
 
   # ─── Admin Zones ──────────────────────────────────────────────────────
   /api/admin/zones:

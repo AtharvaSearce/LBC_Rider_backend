@@ -1,42 +1,15 @@
 import { Router, Request, Response } from 'express';
-import { Prisma, StopStatus } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import logger from '../utils/logger';
-import { optimizeStopOrder, GeoPoint } from '../utils/geo';
+import {
+  optimizeManifestRoute,
+  parseGeoPoint,
+  resequenceManifest,
+} from '../services/route-optimization';
 
 const router = Router();
 
 const ROUTES_API_URL = 'https://routes.googleapis.com/directions/v2:computeRoutes';
-
-const TERMINAL_STATUSES: StopStatus[] = [
-  StopStatus.completed,
-  StopStatus.rts,
-  StopStatus.reschedule,
-];
-
-function parseGeoPoint(input: unknown): GeoPoint | null {
-  if (!input || typeof input !== 'object') return null;
-  const obj = input as Record<string, unknown>;
-  const lat = obj.lat ?? obj.latitude;
-  const lng = obj.lng ?? obj.longitude;
-  if (typeof lat === 'number' && typeof lng === 'number') {
-    return { latitude: lat, longitude: lng };
-  }
-  return null;
-}
-
-const stopWithOrderInclude = {
-  order: {
-    select: {
-      addressLat: true,
-      addressLng: true,
-    },
-  },
-} as const;
-
-type StopWithOrder = Prisma.StopGetPayload<{
-  include: typeof stopWithOrderInclude;
-}>;
 
 async function findManifestByParam(manifestParam: string) {
   return prisma.manifest.findFirst({
@@ -44,82 +17,6 @@ async function findManifestByParam(manifestParam: string) {
       OR: [{ id: manifestParam }, { manifestId: manifestParam }],
     },
   });
-}
-
-// Sequences are temporarily parked at this offset before final values are
-// assigned, so we never transiently violate the unique (manifestId, sequence)
-// index while shuffling stops around inside a transaction.
-const SEQUENCE_PARK_OFFSET = 100000;
-
-function isTerminalStatus(status: StopStatus): boolean {
-  return TERMINAL_STATUSES.includes(status);
-}
-
-/**
- * Renumber every stop in a manifest into a single contiguous 1..N sequence:
- *   - terminal stops (completed/rts/reschedule) keep their relative order up
- *     front and retain their status,
- *   - the active stops named by [orderedActiveStopIds] follow in that order,
- *     with the first one promoted to in_progress and the rest set to pending,
- *   - any remaining non-terminal stops (e.g. attempt-exhausted failed stops)
- *     trail behind in their existing order and keep their status.
- *
- * Because terminal stops may hold arbitrary sequence values (completion never
- * renumbers them), renumbering the whole manifest is the only collision-free
- * way to reorder. Runs inside the caller's transaction.
- */
-async function resequenceManifest(
-  tx: Prisma.TransactionClient,
-  manifestDbId: string,
-  orderedActiveStopIds: string[]
-): Promise<string[]> {
-  const allStops = await tx.stop.findMany({
-    where: { manifestId: manifestDbId },
-    orderBy: { sequence: 'asc' },
-    select: { id: true, stopId: true, status: true },
-  });
-
-  const byStopId = new Map(allStops.map((s) => [s.stopId, s]));
-  const activeSet = new Set(orderedActiveStopIds);
-
-  const terminalStops = allStops.filter((s) => isTerminalStatus(s.status));
-
-  const orderedActive = orderedActiveStopIds
-    .map((sid) => byStopId.get(sid))
-    .filter(
-      (s): s is (typeof allStops)[number] =>
-        !!s && !isTerminalStatus(s.status)
-    );
-
-  const leftover = allStops.filter(
-    (s) => !isTerminalStatus(s.status) && !activeSet.has(s.stopId)
-  );
-
-  const finalOrder = [...terminalStops, ...orderedActive, ...leftover];
-
-  // Phase 1: park everything we are about to renumber.
-  for (let i = 0; i < finalOrder.length; i++) {
-    await tx.stop.update({
-      where: { id: finalOrder[i].id },
-      data: { sequence: SEQUENCE_PARK_OFFSET + i },
-    });
-  }
-
-  // Phase 2: assign contiguous sequences and reconcile active-stop statuses.
-  const firstActiveId = orderedActive[0]?.id;
-  for (let i = 0; i < finalOrder.length; i++) {
-    const stop = finalOrder[i];
-    const data: Prisma.StopUpdateInput = { sequence: i + 1 };
-    if (!isTerminalStatus(stop.status) && activeSet.has(stop.stopId)) {
-      data.status =
-        stop.id === firstActiveId
-          ? StopStatus.in_progress
-          : StopStatus.pending;
-    }
-    await tx.stop.update({ where: { id: stop.id }, data });
-  }
-
-  return orderedActive.map((s) => s.stopId);
 }
 
 router.post('/optimize', async (req: Request, res: Response) => {
@@ -139,111 +36,30 @@ router.post('/optimize', async (req: Request, res: Response) => {
       return;
     }
 
-    const primaryStops = await prisma.stop.findMany({
-      where: {
-        manifestId: manifest.id,
-        status: { in: [StopStatus.pending, StopStatus.in_progress] },
-      },
-      orderBy: { sequence: 'asc' },
-      include: stopWithOrderInclude,
-    });
-
-    const failedStopsRaw = await prisma.stop.findMany({
-      where: {
-        manifestId: manifest.id,
-        status: StopStatus.failed,
-      },
-      orderBy: { sequence: 'asc' },
-      include: stopWithOrderInclude,
-    });
-
-    const failedStops = failedStopsRaw.filter(
-      (stop) => stop.attemptCount < stop.maxAttempts
-    );
-
-    const pendingStops: StopWithOrder[] = [...primaryStops, ...failedStops];
-
-    if (pendingStops.length === 0) {
-      res.json({ newOrder: [], message: 'No pending stops to optimize' });
-      return;
-    }
-
-    // Determine the starting point for the optimisation:
-    // 1. the rider's live location sent by the app, else
-    // 2. the stop that is currently in progress, else
-    // 3. the first stop in the existing sequence.
-    const stopPoint = (stop: StopWithOrder): GeoPoint => ({
-      latitude: stop.order.addressLat,
-      longitude: stop.order.addressLng,
-    });
-
-    const inProgressStop = pendingStops.find(
-      (s) => s.status === StopStatus.in_progress
-    );
     const originPoint = parseGeoPoint(origin);
-    const startPoint: GeoPoint =
-      originPoint ??
-      (inProgressStop ? stopPoint(inProgressStop) : stopPoint(pendingStops[0]));
-
     logger.info('[Route] Optimize start', {
       manifestId: manifestParam,
       receivedOrigin: origin ?? null,
-      startSource: originPoint
-        ? 'rider-location'
-        : inProgressStop
-          ? 'in-progress-stop'
-          : 'first-stop',
-      startPoint,
+      startSource: originPoint ? 'rider-location' : 'server-default',
+      priorityStopId,
     });
 
-    // Build the optimised order. A priority stop (if provided) is pinned to the
-    // front and the remaining stops are optimised starting from that stop.
-    let ordered: StopWithOrder[];
-    const priorityStop = priorityStopId
-      ? pendingStops.find((s) => s.stopId === priorityStopId)
-      : undefined;
-
-    if (priorityStop) {
-      const rest = pendingStops.filter((s) => s.stopId !== priorityStop.stopId);
-      const restOrder = optimizeStopOrder(
-        stopPoint(priorityStop),
-        rest.map(stopPoint)
-      );
-      ordered = [priorityStop, ...restOrder.map((idx) => rest[idx])];
-    } else {
-      const order = optimizeStopOrder(startPoint, pendingStops.map(stopPoint));
-      ordered = order.map((idx) => pendingStops[idx]);
-    }
-
-    // Persist the new order: renumber the whole manifest contiguously and
-    // promote the closest/first active stop to in_progress. Renumbering every
-    // stop (not just the active ones) is required because completed stops keep
-    // arbitrary sequence values, which would otherwise collide.
-    await prisma.$transaction(
-      async (tx) => {
-        await resequenceManifest(
-          tx,
-          manifest.id,
-          ordered.map((s) => s.stopId)
-        );
-      },
-      { timeout: 15000 }
-    );
-
-    const newOrder = ordered.map((s) => s.stopId);
+    const result = await optimizeManifestRoute(manifest.id, {
+      priorityStopId,
+      origin,
+    });
 
     logger.info('[Route] Optimized', {
       manifestId: manifestParam,
-      stopCount: newOrder.length,
+      stopCount: result.newOrder.length,
       priorityStopId,
-      firstStopId: newOrder[0],
+      firstStopId: result.firstStopId,
     });
+
     res.json({
-      newOrder,
-      firstStopId: newOrder[0],
-      message: priorityStopId
-        ? `Route optimized with ${priorityStopId} prioritized first`
-        : 'Route optimized for shortest path',
+      newOrder: result.newOrder,
+      firstStopId: result.firstStopId,
+      message: result.message,
     });
   } catch (err) {
     logger.error('[Route] Optimize error', { err });

@@ -13,6 +13,7 @@
     "db:push": "prisma db push",
     "db:seed": "npx ts-node prisma/seed.ts",
     "db:seed:manila": "npx ts-node prisma/seed-manila.ts",
+    "db:seed:hinjewadi-orders": "npx ts-node prisma/seed-hinjewadi-orders.ts",
     "db:studio": "prisma studio",
     "test": "jest",
     "test:watch": "jest --watch",
