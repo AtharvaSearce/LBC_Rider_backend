@@ -1,6 +1,8 @@
 import { Prisma, StopStatus } from '@prisma/client';
 import { prisma } from '../lib/prisma';
+import logger from '../utils/logger';
 import { GeoPoint, optimizeStopOrder } from '../utils/geo';
+import { googleOptimizeStopOrder } from './google-route-optimization';
 
 export const TERMINAL_STOP_STATUSES: StopStatus[] = [
   StopStatus.completed,
@@ -162,6 +164,20 @@ export async function optimizeManifestRoute(
       ? stopPoint(inProgressStop)
       : stopPoint(pendingStops[0]));
 
+  const useGoogle =
+    (process.env.USE_GOOGLE_ROUTE_OPTIMIZATION ?? 'local').toLowerCase() ===
+    'google';
+
+  const resolveOrder = useGoogle ? googleOptimizeStopOrder : optimizeStopOrder;
+  const strategyLabel = useGoogle ? 'google' : 'local';
+
+  logger.info('[RouteOpt] Strategy selected', {
+    strategy: strategyLabel,
+    manifestId: manifestDbId,
+    pendingStops: pendingStops.length,
+    hasPriority: !!priorityStopId,
+  });
+
   let ordered: StopWithGeo[];
   const priorityStop = priorityStopId
     ? pendingStops.find((s) => s.stopId === priorityStopId)
@@ -169,13 +185,13 @@ export async function optimizeManifestRoute(
 
   if (priorityStop) {
     const rest = pendingStops.filter((s) => s.stopId !== priorityStop.stopId);
-    const restOrder = optimizeStopOrder(
+    const restOrder = await resolveOrder(
       stopPoint(priorityStop),
       rest.map(stopPoint)
     );
     ordered = [priorityStop, ...restOrder.map((idx) => rest[idx])];
   } else {
-    const order = optimizeStopOrder(startPoint, pendingStops.map(stopPoint));
+    const order = await resolveOrder(startPoint, pendingStops.map(stopPoint));
     ordered = order.map((idx) => pendingStops[idx]);
   }
 
@@ -192,11 +208,19 @@ export async function optimizeManifestRoute(
 
   const newOrder = ordered.map((s) => s.stopId);
 
+  logger.info('[RouteOpt] Optimisation complete', {
+    strategy: strategyLabel,
+    manifestId: manifestDbId,
+    stopCount: newOrder.length,
+    firstStopId: newOrder[0],
+    priorityStopId: priorityStopId ?? null,
+  });
+
   return {
     newOrder,
     firstStopId: newOrder[0],
     message: priorityStopId
-      ? `Route optimized with ${priorityStopId} prioritized first`
-      : 'Route optimized for shortest path',
+      ? `Route optimized (${strategyLabel}) with ${priorityStopId} prioritized first`
+      : `Route optimized for shortest path (${strategyLabel})`,
   };
 }
