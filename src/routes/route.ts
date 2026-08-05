@@ -192,7 +192,14 @@ router.post('/directions', async (req: Request, res: Response) => {
       body: JSON.stringify(body),
     });
 
-    const data = await response.json();
+    const data = (await response.json()) as { routes?: unknown[] };
+
+    if (!response.ok || !data.routes || data.routes.length === 0) {
+      logger.error('[Route] Directions API error', { status: response.status, data });
+      res.status(502).json({ error: 'No route found', details: data });
+      return;
+    }
+
     res.json(data);
   } catch (err) {
     logger.error('[Route] Directions error', { err });
